@@ -1,177 +1,351 @@
-import { createPool, type Pool, type PoolConnection, type RowDataPacket } from 'mysql2/promise';
-import type { EditorialPost, Series, SeriesStatus, PlatformLink } from '../shared/types.js';
+import mysql from 'mysql2/promise';
+import type { EditorialPost, Series } from '../shared/types.js';
 
-let pool: Pool | null = null;
-let ready = false;
+let pool: mysql.Pool | null = null;
+let dbInitialized = false;
+const memoryMeta = new Map<string, string>();
 
-function parseJson<T>(value: unknown, fallback: T): T {
-  if (value == null) return fallback;
-  if (typeof value !== 'string') return value as T;
+export function getDbPool(): mysql.Pool | null {
+  if (pool) return pool;
+  const url = process.env.DATABASE_URL?.trim();
+  if (!url) return null;
+
   try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
+    pool = mysql.createPool({
+      uri: url,
+      waitForConnections: true,
+      connectionLimit: 5,
+      queueLimit: 0,
+      enableKeepAlive: true,
+    });
+    return pool;
+  } catch (err) {
+    console.warn('[db] Could not create MySQL pool, falling back to in-memory catalog:', err);
+    return null;
   }
 }
 
-export async function initDatabase(): Promise<void> {
-  const dsn = process.env.DATABASE_URL?.trim();
-  if (!dsn) {
-    console.warn('DATABASE_URL is not configured; catalog will use its in-process cache.');
-    return;
-  }
+export async function initDatabase(): Promise<boolean> {
+  const db = getDbPool();
+  if (!db) return false;
+  if (dbInitialized) return true;
 
-  pool = createPool(dsn);
   try {
-    await pool.query('SELECT 1');
-    await pool.query(`
+    await db.execute(`
       CREATE TABLE IF NOT EXISTS bl_series (
-        id VARCHAR(191) NOT NULL PRIMARY KEY,
-        title VARCHAR(255) NOT NULL,
-        country VARCHAR(100) NOT NULL,
-        status VARCHAR(24) NOT NULL,
-        source_url TEXT NOT NULL,
-        cover_url TEXT NULL,
-        synopsis TEXT NULL,
-        year_num INT NULL,
-        release_date VARCHAR(120) NULL,
-        genres_json JSON NOT NULL,
+        id VARCHAR(191) PRIMARY KEY,
+        title VARCHAR(500) NOT NULL,
+        country VARCHAR(120) NOT NULL,
+        status VARCHAR(32) NOT NULL,
         platforms_json JSON NOT NULL,
-        updated_at DATETIME NOT NULL,
-        detail_fetched_at DATETIME NULL,
-        INDEX bl_series_status_idx (status),
-        INDEX bl_series_country_idx (country)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        genres_json JSON NOT NULL,
+        seasons_json JSON NULL,
+        year INT NULL,
+        release_date VARCHAR(64) NULL,
+        episodes INT NULL,
+        synopsis TEXT NULL,
+        cover_url TEXT NULL,
+        source_url TEXT NOT NULL,
+        updated_at VARCHAR(64) NOT NULL,
+        sort_order INT NOT NULL DEFAULT 0,
+        INDEX idx_status (status),
+        INDEX idx_country (country),
+        INDEX idx_sort (sort_order)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
-    await pool.query(`
+
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS bl_platforms (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        series_id VARCHAR(191) NOT NULL,
+        platform_name VARCHAR(120) NOT NULL,
+        platform_url TEXT NOT NULL,
+        UNIQUE KEY uniq_series_platform (series_id, platform_name),
+        INDEX idx_platform_series (series_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS bl_episodes (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        series_id VARCHAR(191) NOT NULL,
+        season_number INT NOT NULL DEFAULT 1,
+        episode_number INT NOT NULL,
+        platform_name VARCHAR(120) NOT NULL,
+        redirect_url TEXT NOT NULL,
+        UNIQUE KEY uniq_series_ep_platform (series_id, season_number, episode_number, platform_name),
+        INDEX idx_episode_series (series_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await db.execute(`
       CREATE TABLE IF NOT EXISTS bl_app_meta (
-        meta_key VARCHAR(80) NOT NULL PRIMARY KEY,
-        value_text MEDIUMTEXT NULL,
-        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        meta_key VARCHAR(120) PRIMARY KEY,
+        meta_value LONGTEXT NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
-    ready = true;
-    console.info('Managed catalog database is ready.');
-  } catch {
-    ready = false;
-    console.error('Managed catalog database is unavailable; keeping the live in-process catalog active.');
+
+    dbInitialized = true;
+    return true;
+  } catch (err) {
+    console.warn('[db] Database table initialization skipped (using in-memory cache):', err);
+    return false;
+  }
+}
+
+export async function closeDatabase(): Promise<void> {
+  if (pool) {
+    try {
+      await pool.end();
+    } catch {
+      // Ignore close error
+    }
+    pool = null;
+    dbInitialized = false;
   }
 }
 
 export function isDatabaseReady(): boolean {
-  return ready;
+  return dbInitialized && pool !== null;
 }
 
 export async function loadSeries(): Promise<Series[]> {
-  if (!pool || !ready) return [];
+  const rows = await loadSeriesFromDb();
+  return rows ?? [];
+}
+
+export async function loadSeriesFromDb(): Promise<Series[] | null> {
+  const ready = await initDatabase();
+  const db = getDbPool();
+  if (!ready || !db) return null;
+
   try {
-    const [rows] = await pool.query<RowDataPacket[]>('SELECT * FROM bl_series ORDER BY title');
+    const [rows] = await db.query<mysql.RowDataPacket[]>(
+      'SELECT * FROM bl_series ORDER BY sort_order ASC, title ASC',
+    );
+    if (!Array.isArray(rows) || rows.length === 0) return [];
+
     return rows.map((row) => ({
       id: String(row.id),
       title: String(row.title),
       country: String(row.country),
-      status: String(row.status) as SeriesStatus,
-      sourceUrl: String(row.source_url),
-      coverUrl: row.cover_url ? String(row.cover_url) : undefined,
-      synopsis: row.synopsis ? String(row.synopsis) : undefined,
-      year: row.year_num == null ? undefined : Number(row.year_num),
+      status: (row.status as Series['status']) || 'completed',
+      platforms:
+        typeof row.platforms_json === 'string'
+          ? JSON.parse(row.platforms_json)
+          : (row.platforms_json ?? []),
+      genres:
+        typeof row.genres_json === 'string'
+          ? JSON.parse(row.genres_json)
+          : (row.genres_json ?? []),
+      seasons: row.seasons_json
+        ? typeof row.seasons_json === 'string'
+          ? JSON.parse(row.seasons_json)
+          : row.seasons_json
+        : undefined,
+      year: row.year !== null && row.year !== undefined ? Number(row.year) : undefined,
       releaseDate: row.release_date ? String(row.release_date) : undefined,
-      genres: parseJson<string[]>(row.genres_json, []),
-      platforms: parseJson<PlatformLink[]>(row.platforms_json, []),
-      updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
-      detailFetchedAt: row.detail_fetched_at ? new Date(row.detail_fetched_at).toISOString() : undefined,
+      episodes: row.episodes !== null && row.episodes !== undefined ? Number(row.episodes) : undefined,
+      synopsis: row.synopsis ? String(row.synopsis) : undefined,
+      coverUrl: row.cover_url ? String(row.cover_url) : undefined,
+      sourceUrl: String(row.source_url),
+      updatedAt: String(row.updated_at),
     }));
-  } catch {
-    console.error('Unable to read the managed catalog; continuing with the in-process catalog.');
-    return [];
+  } catch (err) {
+    console.warn('[db] Failed to load series from DB:', err);
+    return null;
   }
 }
 
-export async function saveSeries(series: Series[], replaceSnapshot = false): Promise<void> {
-  if (!pool || !ready || series.length === 0) return;
-  let connection: PoolConnection | undefined;
+export async function saveSeries(seriesList: Series[], _replaceAll = false): Promise<void> {
+  await saveSeriesToDb(seriesList);
+}
+
+export async function saveSeriesToDb(seriesList: Series[]): Promise<void> {
+  const ready = await initDatabase();
+  const db = getDbPool();
+  if (!ready || !db || seriesList.length === 0) return;
+
   try {
-    connection = await pool.getConnection();
-    await connection.beginTransaction();
-    let previousCount = 0;
-    if (replaceSnapshot) {
-      const [countRows] = await connection.query<RowDataPacket[]>('SELECT COUNT(*) AS total FROM bl_series');
-      previousCount = Number(countRows[0]?.total ?? 0);
+    const sql = `
+      INSERT INTO bl_series (
+        id, title, country, status, platforms_json, genres_json, seasons_json,
+        year, release_date, episodes, synopsis, cover_url, source_url, updated_at, sort_order
+      ) VALUES ?
+      ON DUPLICATE KEY UPDATE
+        title = VALUES(title),
+        country = VALUES(country),
+        status = VALUES(status),
+        platforms_json = VALUES(platforms_json),
+        genres_json = VALUES(genres_json),
+        seasons_json = VALUES(seasons_json),
+        year = VALUES(year),
+        release_date = VALUES(release_date),
+        episodes = VALUES(episodes),
+        synopsis = VALUES(synopsis),
+        cover_url = VALUES(cover_url),
+        source_url = VALUES(source_url),
+        updated_at = VALUES(updated_at),
+        sort_order = VALUES(sort_order)
+    `;
+
+    const nowIso = new Date().toISOString();
+    const values = seriesList.map((s, idx) => [
+      s.id,
+      s.title,
+      s.country,
+      s.status,
+      JSON.stringify(s.platforms ?? []),
+      JSON.stringify(s.genres ?? []),
+      s.seasons ? JSON.stringify(s.seasons) : null,
+      s.year ?? null,
+      s.releaseDate ?? null,
+      s.episodes ?? null,
+      s.synopsis ?? null,
+      s.coverUrl ?? null,
+      s.sourceUrl,
+      s.updatedAt ?? nowIso,
+      idx,
+    ]);
+
+    const chunkSize = 50;
+    for (let i = 0; i < values.length; i += chunkSize) {
+      const chunk = values.slice(i, i + chunkSize);
+      await db.query(sql, [chunk]);
     }
-    const columns = [
-      'id', 'title', 'country', 'status', 'source_url', 'cover_url', 'synopsis',
-      'year_num', 'release_date', 'genres_json', 'platforms_json', 'updated_at', 'detail_fetched_at',
-    ];
-    const updateColumns = columns.slice(1).map((column) => `${column}=VALUES(${column})`).join(', ');
-    const sql = `INSERT INTO bl_series (${columns.join(', ')}) VALUES ? ON DUPLICATE KEY UPDATE ${updateColumns}`;
-    for (let offset = 0; offset < series.length; offset += 100) {
-      const batch = series.slice(offset, offset + 100).map((item) => [
-        item.id,
-        item.title.slice(0, 255),
-        item.country,
-        item.status,
-        item.sourceUrl,
-        item.coverUrl ?? null,
-        item.synopsis ?? null,
-        item.year ?? null,
-        item.releaseDate ?? null,
-        JSON.stringify(item.genres ?? []),
-        JSON.stringify(item.platforms ?? []),
-        item.updatedAt,
-        item.detailFetchedAt ?? null,
-      ]);
-      await connection.query(sql, [batch]);
+
+    // Also sync normalized bl_platforms and bl_episodes tables for SQL queryability
+    const platformRows: Array<[string, string, string]> = [];
+    const episodeRows: Array<[string, number, number, string, string]> = [];
+
+    for (const s of seriesList) {
+      for (const pf of s.platforms ?? []) {
+        platformRows.push([s.id, pf.name, pf.url]);
+      }
+      if (s.platforms?.[0]) {
+        const primaryPf = s.platforms[0];
+        const epCount = Math.min(Math.max(s.episodes ?? 12, 1), 24);
+        for (let epNum = 1; epNum <= epCount; epNum++) {
+          const epUrl =
+            epNum === 1
+              ? primaryPf.url
+              : `/api/redirect?platform=${encodeURIComponent(primaryPf.name)}&title=${encodeURIComponent(s.title)}&episode=${epNum}&kind=series&baseUrl=${encodeURIComponent(primaryPf.url)}`;
+          episodeRows.push([s.id, 1, epNum, primaryPf.name, epUrl]);
+        }
+      }
     }
-    const safeToPrune = replaceSnapshot && series.length >= 20
-      && (previousCount === 0 || series.length >= Math.ceil(previousCount * 0.75));
-    if (safeToPrune) {
-      const placeholders = series.map(() => '?').join(', ');
-      await connection.query(`DELETE FROM bl_series WHERE id NOT IN (${placeholders})`, series.map((item) => item.id));
-    } else if (replaceSnapshot && previousCount > 0) {
-      console.warn('Skipped stale-row pruning because the refreshed source snapshot was much smaller than the saved catalog.');
+
+    if (platformRows.length > 0) {
+      const pfSql = `
+        INSERT INTO bl_platforms (series_id, platform_name, platform_url)
+        VALUES ?
+        ON DUPLICATE KEY UPDATE platform_url = VALUES(platform_url)
+      `;
+      for (let i = 0; i < platformRows.length; i += 100) {
+        await db.query(pfSql, [platformRows.slice(i, i + 100)]);
+      }
     }
-    await connection.commit();
-  } catch {
-    if (connection) await connection.rollback().catch(() => undefined);
-    console.error('Unable to save the catalog snapshot to the managed database.');
-  } finally {
-    connection?.release();
+
+    if (episodeRows.length > 0) {
+      const epSql = `
+        INSERT INTO bl_episodes (series_id, season_number, episode_number, platform_name, redirect_url)
+        VALUES ?
+        ON DUPLICATE KEY UPDATE redirect_url = VALUES(redirect_url)
+      `;
+      for (let i = 0; i < episodeRows.length; i += 200) {
+        await db.query(epSql, [episodeRows.slice(i, i + 200)]);
+      }
+    }
+  } catch (err) {
+    console.warn('[db] Failed to save series to DB:', err);
+  }
+}
+
+export async function deleteSeriesFromDb(seriesId: string): Promise<void> {
+  const ready = await initDatabase();
+  const db = getDbPool();
+  if (!ready || !db) return;
+
+  try {
+    await db.execute('DELETE FROM bl_episodes WHERE series_id = ?', [seriesId]);
+    await db.execute('DELETE FROM bl_platforms WHERE series_id = ?', [seriesId]);
+    await db.execute('DELETE FROM bl_series WHERE id = ?', [seriesId]);
+  } catch (err) {
+    console.warn('[db] Failed to delete series from DB:', err);
   }
 }
 
 export async function readMeta(key: string): Promise<string | null> {
-  if (!pool || !ready) return null;
+  if (memoryMeta.has(key)) {
+    return memoryMeta.get(key) ?? null;
+  }
+  const ready = await initDatabase();
+  const db = getDbPool();
+  if (!ready || !db) return null;
+
   try {
-    const [rows] = await pool.query<RowDataPacket[]>('SELECT value_text FROM bl_app_meta WHERE meta_key = ?', [key]);
-    return rows[0]?.value_text == null ? null : String(rows[0].value_text);
+    const [rows] = await db.query<mysql.RowDataPacket[]>(
+      'SELECT meta_value FROM bl_app_meta WHERE meta_key = ? LIMIT 1',
+      [key],
+    );
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    const val = String(rows[0].meta_value);
+    memoryMeta.set(key, val);
+    return val;
   } catch {
     return null;
   }
 }
 
 export async function writeMeta(key: string, value: string): Promise<void> {
-  if (!pool || !ready) return;
+  memoryMeta.set(key, value);
+  const ready = await initDatabase();
+  const db = getDbPool();
+  if (!ready || !db) return;
+
   try {
-    await pool.query(
-      'INSERT INTO bl_app_meta (meta_key, value_text) VALUES (?, ?) ON DUPLICATE KEY UPDATE value_text = VALUES(value_text)',
+    await db.execute(
+      `INSERT INTO bl_app_meta (meta_key, meta_value) VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)`,
       [key, value],
     );
   } catch {
-    console.error('Unable to save catalog metadata to the managed database.');
+    // Ignore meta write errors
   }
 }
 
-export async function closeDatabase(): Promise<void> {
-  if (pool) await pool.end();
-  pool = null;
-  ready = false;
-}
-
-export function parseEditorial(value: string | null): EditorialPost | null {
-  if (!value) return null;
+export function parseEditorial(raw: string | null): EditorialPost | null {
+  if (!raw) return null;
   try {
-    return JSON.parse(value) as EditorialPost;
+    const parsed = JSON.parse(raw) as EditorialPost;
+    if (parsed && typeof parsed.title === 'string' && typeof parsed.body === 'string') {
+      return parsed;
+    }
+    return null;
   } catch {
     return null;
   }
+}
+
+export async function getAppMeta<T>(key: string): Promise<T | null> {
+  const raw = await readMeta(key);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+export async function setAppMeta<T>(key: string, value: T): Promise<void> {
+  await writeMeta(key, JSON.stringify(value));
+}
+
+export async function loadEditorialFromDb(): Promise<EditorialPost | null> {
+  return getAppMeta<EditorialPost>('editorial_post');
+}
+
+export async function saveEditorialToDb(post: EditorialPost): Promise<void> {
+  await setAppMeta('editorial_post', post);
 }

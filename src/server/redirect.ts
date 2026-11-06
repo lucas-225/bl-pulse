@@ -1,7 +1,166 @@
+import type { AffiliateConfig, RedirectAnalyticsSummary, RedirectClickEvent } from '../shared/types.js';
+import { getAppMeta, setAppMeta } from './db.js';
+
 const redirectCache = new Map<string, string>();
 
 const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+interface AnalyticsState {
+  totalRedirects: number;
+  affiliateClicks: number;
+  byCategory: {
+    series: number;
+    anime: number;
+    manga: number;
+  };
+  byPlatform: Record<string, number>;
+  titleCounts: Record<
+    string,
+    {
+      title: string;
+      kind: 'series' | 'anime' | 'manga';
+      count: number;
+      lastClickedAt: string;
+    }
+  >;
+  recentClicks: RedirectClickEvent[];
+}
+
+const analyticsState: AnalyticsState = {
+  totalRedirects: 0,
+  affiliateClicks: 0,
+  byCategory: { series: 0, anime: 0, manga: 0 },
+  byPlatform: {},
+  titleCounts: {},
+  recentClicks: [],
+};
+
+let analyticsHydrated = false;
+
+export async function hydrateAnalytics(): Promise<void> {
+  if (analyticsHydrated) return;
+  analyticsHydrated = true;
+  const saved = await getAppMeta<AnalyticsState>('redirect_analytics');
+  if (saved && typeof saved.totalRedirects === 'number') {
+    analyticsState.totalRedirects = saved.totalRedirects || 0;
+    analyticsState.affiliateClicks = saved.affiliateClicks || 0;
+    analyticsState.byCategory = {
+      series: saved.byCategory?.series || 0,
+      anime: saved.byCategory?.anime || 0,
+      manga: saved.byCategory?.manga || 0,
+    };
+    analyticsState.byPlatform = saved.byPlatform ?? {};
+    analyticsState.titleCounts = saved.titleCounts ?? {};
+    analyticsState.recentClicks = Array.isArray(saved.recentClicks) ? saved.recentClicks.slice(0, 60) : [];
+  }
+}
+
+export function recordRedirectClick(event: RedirectClickEvent): void {
+  analyticsState.totalRedirects += 1;
+  if (event.affiliateApplied) {
+    analyticsState.affiliateClicks += 1;
+  }
+  const kind: 'series' | 'anime' | 'manga' =
+    event.kind === 'anime' || event.kind === 'manga' ? event.kind : 'series';
+  analyticsState.byCategory[kind] += 1;
+
+  const pfName = event.platform.trim() || 'Official Platform';
+  analyticsState.byPlatform[pfName] = (analyticsState.byPlatform[pfName] ?? 0) + 1;
+
+  const titleKey = `${kind}:${event.title.toLowerCase().trim()}`;
+  const existing = analyticsState.titleCounts[titleKey];
+  analyticsState.titleCounts[titleKey] = {
+    title: event.title,
+    kind,
+    count: (existing?.count ?? 0) + 1,
+    lastClickedAt: event.timestamp,
+  };
+
+  analyticsState.recentClicks = [event, ...analyticsState.recentClicks].slice(0, 60);
+  void setAppMeta('redirect_analytics', analyticsState);
+}
+
+export function getAnalyticsSummary(): RedirectAnalyticsSummary {
+  const topTitles = Object.values(analyticsState.titleCounts)
+    .sort((a, b) => b.count - a.count || b.lastClickedAt.localeCompare(a.lastClickedAt))
+    .slice(0, 20);
+
+  return {
+    totalRedirects: analyticsState.totalRedirects,
+    affiliateClicks: analyticsState.affiliateClicks,
+    byCategory: { ...analyticsState.byCategory },
+    byPlatform: { ...analyticsState.byPlatform },
+    topTitles,
+    recentClicks: analyticsState.recentClicks.slice(0, 30),
+  };
+}
+
+export function applyAffiliateParams(
+  rawUrl: string,
+  platform: string,
+  affiliates: AffiliateConfig,
+): { url: string; affiliateApplied: boolean } {
+  try {
+    const parsed = new URL(rawUrl);
+    const pf = platform.toLowerCase();
+    const host = parsed.hostname.toLowerCase();
+
+    if ((pf.includes('gagaoolala') || host.includes('gagaoolala.com')) && affiliates.gagaoolalaRef.trim()) {
+      parsed.searchParams.set('ref', affiliates.gagaoolalaRef.trim());
+      parsed.searchParams.set('utm_source', 'blpulse');
+      return { url: parsed.toString(), affiliateApplied: true };
+    }
+    if ((pf.includes('viki') || host.includes('viki.com')) && affiliates.vikiAffiliateId.trim()) {
+      parsed.searchParams.set('utm_source', affiliates.vikiAffiliateId.trim());
+      parsed.searchParams.set('utm_medium', 'affiliate');
+      parsed.searchParams.set('ref', affiliates.vikiAffiliateId.trim());
+      return { url: parsed.toString(), affiliateApplied: true };
+    }
+    if ((pf.includes('iqiyi') || host.includes('iq.com')) && affiliates.iqiyiAffiliateId.trim()) {
+      parsed.searchParams.set('raf', affiliates.iqiyiAffiliateId.trim());
+      parsed.searchParams.set('utm_source', 'blpulse');
+      return { url: parsed.toString(), affiliateApplied: true };
+    }
+    if ((pf.includes('wetv') || host.includes('wetv.vip')) && affiliates.wetvAffiliateId.trim()) {
+      parsed.searchParams.set('ref', affiliates.wetvAffiliateId.trim());
+      parsed.searchParams.set('utm_source', 'blpulse');
+      return { url: parsed.toString(), affiliateApplied: true };
+    }
+    if ((pf.includes('crunchyroll') || host.includes('crunchyroll.com')) && affiliates.crunchyrollAffiliateId.trim()) {
+      parsed.searchParams.set('utm_source', affiliates.crunchyrollAffiliateId.trim());
+      parsed.searchParams.set('utm_medium', 'affiliate');
+      return { url: parsed.toString(), affiliateApplied: true };
+    }
+    if ((pf.includes('tapas') || host.includes('tapas.io')) && affiliates.tapasRef.trim()) {
+      parsed.searchParams.set('ref', affiliates.tapasRef.trim());
+      parsed.searchParams.set('utm_source', 'blpulse');
+      return { url: parsed.toString(), affiliateApplied: true };
+    }
+    if ((pf.includes('lezhin') || host.includes('lezhinus.com')) && affiliates.lezhinRef.trim()) {
+      parsed.searchParams.set('ref', affiliates.lezhinRef.trim());
+      parsed.searchParams.set('utm_source', 'blpulse');
+      return { url: parsed.toString(), affiliateApplied: true };
+    }
+    if ((pf.includes('tappytoon') || host.includes('tappytoon.com')) && affiliates.tappytoonRef.trim()) {
+      parsed.searchParams.set('ref', affiliates.tappytoonRef.trim());
+      parsed.searchParams.set('utm_source', 'blpulse');
+      return { url: parsed.toString(), affiliateApplied: true };
+    }
+    if ((pf.includes('manta') || host.includes('manta.net')) && affiliates.mantaRef.trim()) {
+      parsed.searchParams.set('ref', affiliates.mantaRef.trim());
+      parsed.searchParams.set('utm_source', 'blpulse');
+      return { url: parsed.toString(), affiliateApplied: true };
+    }
+    if ((pf.includes('bookwalker') || host.includes('bookwalker.jp')) && affiliates.bookwalkerRef.trim()) {
+      parsed.searchParams.set('acode', affiliates.bookwalkerRef.trim());
+      return { url: parsed.toString(), affiliateApplied: true };
+    }
+    return { url: rawUrl, affiliateApplied: false };
+  } catch {
+    return { url: rawUrl, affiliateApplied: false };
+  }
+}
 
 function cleanTitle(raw: string): string {
   return raw
@@ -289,6 +448,12 @@ export async function resolvePlatformRedirect(params: {
   if (cleanDirectUrl) {
     redirectCache.set(cacheKey, cleanDirectUrl);
     return cleanDirectUrl;
+  }
+
+  // Fast path: if episode 1 of season 1 has a verified direct platform URL, use it immediately
+  if (cleanBaseUrl && episode === 1 && season === 1 && !platformLower.includes('mangadex')) {
+    redirectCache.set(cacheKey, cleanBaseUrl);
+    return cleanBaseUrl;
   }
 
   let resolvedUrl = '';

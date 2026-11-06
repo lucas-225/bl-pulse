@@ -1,6 +1,4 @@
-import type { CatalogResponse, Series } from '../shared/types';
 import {
-  ALL_ANI_LIST_TAG_RANKS,
   DEFAULT_MINIMUM_BL_TAG_RANK,
   type AniListMediaType,
   type AniListSort,
@@ -8,62 +6,73 @@ import {
   type MediaPageResponse,
   type MediaTitle,
 } from '../shared/media';
+import type {
+  CatalogResponse,
+  MarketSyncResult,
+  MonetizationConfig,
+  RedirectAnalyticsSummary,
+  Series,
+} from '../shared/types';
 
 export async function fetchCatalog(): Promise<CatalogResponse> {
-  const response = await fetch('/api/catalog', { headers: { Accept: 'application/json' } });
-  if (!response.ok) throw new Error(`Catalog request failed (${response.status}).`);
+  const response = await fetch('/api/catalog');
+  if (!response.ok) {
+    throw new Error('Unable to load the catalog right now.');
+  }
   return response.json() as Promise<CatalogResponse>;
 }
 
 export async function refreshCatalog(): Promise<CatalogResponse> {
-  const response = await fetch('/api/catalog/refresh', {
-    method: 'POST',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-  });
-  const data = (await response.json()) as CatalogResponse & { message?: string };
-  if (!response.ok) throw new Error(data.message ?? data.error ?? 'The catalog could not be refreshed.');
-  return data;
+  const response = await fetch('/api/refresh', { method: 'POST' });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? 'Unable to refresh the catalog right now.');
+  }
+  return response.json() as Promise<CatalogResponse>;
 }
 
 export async function fetchSeries(id: string): Promise<Series> {
-  const response = await fetch(`/api/series/${encodeURIComponent(id)}`, { headers: { Accept: 'application/json' } });
-  if (!response.ok) throw new Error(`Series request failed (${response.status}).`);
+  const response = await fetch(`/api/series/${encodeURIComponent(id)}`);
+  if (!response.ok) {
+    throw new Error('Unable to load this series.');
+  }
   return response.json() as Promise<Series>;
+}
+
+export interface MediaFilterOptions {
+  status?: string;
+  format?: string;
+  countryOfOrigin?: string;
 }
 
 export async function fetchMediaPage(
   type: AniListMediaType,
-  page: number,
-  sort: AniListSort,
-  search: string,
+  page = 1,
+  sort: AniListSort = 'POPULARITY_DESC',
+  search = '',
   signal?: AbortSignal,
   includeAdult = false,
   minimumRank: AniListTagRankFilter = DEFAULT_MINIMUM_BL_TAG_RANK,
-  filters?: {
-    status?: string;
-    format?: string;
-    countryOfOrigin?: string;
-  },
+  filters?: MediaFilterOptions,
 ): Promise<MediaPageResponse> {
-  const response = await fetch('/api/media/search', {
-    method: 'POST',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      type,
-      page,
-      sort,
-      search,
-      includeAdult,
-      minimumRank,
-      status: filters?.status,
-      format: filters?.format,
-      countryOfOrigin: filters?.countryOfOrigin,
-    }),
-    signal,
+  const params = new URLSearchParams({
+    type: type.toLowerCase(),
+    page: String(page),
+    sort,
   });
-  const data = (await response.json()) as MediaPageResponse & { message?: string };
-  if (!response.ok) throw new Error(data.message ?? `Media search failed (${response.status}).`);
-  return data;
+  if (search.trim()) params.set('search', search.trim());
+  if (includeAdult) params.set('includeAdult', '1');
+  if (minimumRank !== DEFAULT_MINIMUM_BL_TAG_RANK) params.set('minRank', String(minimumRank));
+  if (filters?.status && filters.status !== 'all') params.set('status', filters.status);
+  if (filters?.format && filters.format !== 'all') params.set('format', filters.format);
+  if (filters?.countryOfOrigin && filters.countryOfOrigin !== 'all') params.set('country', filters.countryOfOrigin);
+
+  const response = await fetch(`/api/media?${params.toString()}`, { signal });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? 'Unable to load titles from AniList.');
+  }
+  return response.json() as Promise<MediaPageResponse>;
 }
 
 export async function fetchMediaTitle(
@@ -74,14 +83,145 @@ export async function fetchMediaTitle(
   signal?: AbortSignal,
 ): Promise<MediaTitle> {
   const params = new URLSearchParams();
-  if (includeAdult) params.set('mature', '1');
-  if (minimumRank === ALL_ANI_LIST_TAG_RANKS) params.set('tagRank', 'all');
+  if (includeAdult) params.set('includeAdult', '1');
+  if (minimumRank !== DEFAULT_MINIMUM_BL_TAG_RANK) params.set('minRank', String(minimumRank));
   const query = params.toString();
-  const response = await fetch(`/api/media/${type.toLowerCase()}/${id}${query ? `?${query}` : ''}`, {
-    headers: { Accept: 'application/json' },
-    signal,
+  const response = await fetch(`/api/media/${type.toLowerCase()}/${id}${query ? `?${query}` : ''}`, { signal });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? 'Unable to load title details from AniList.');
+  }
+  return response.json() as Promise<MediaTitle>;
+}
+
+// ============================================================================
+// ADMIN & MONETIZATION API CLIENT
+// ============================================================================
+
+export interface AdminVerifyResponse {
+  ok: boolean;
+  databaseReady: boolean;
+  seriesCount: number;
+  lastRefreshed: string | null;
+  monetization: MonetizationConfig;
+  analytics: RedirectAnalyticsSummary;
+}
+
+export async function verifyAdminPassword(password: string): Promise<AdminVerifyResponse> {
+  const response = await fetch('/api/admin/verify', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-admin-password': password,
+    },
+    body: JSON.stringify({ password }),
   });
-  const data = (await response.json()) as MediaTitle & { message?: string };
-  if (!response.ok) throw new Error(data.message ?? `Media request failed (${response.status}).`);
-  return data;
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? 'Invalid admin password.');
+  }
+  return response.json() as Promise<AdminVerifyResponse>;
+}
+
+export async function fetchAdminAnalytics(password: string): Promise<{
+  databaseReady: boolean;
+  analytics: RedirectAnalyticsSummary;
+  monetization: MonetizationConfig;
+}> {
+  const response = await fetch('/api/admin/analytics', {
+    headers: { 'x-admin-password': password },
+  });
+  if (!response.ok) {
+    throw new Error('Unable to load admin analytics.');
+  }
+  return response.json();
+}
+
+export async function triggerMarketAutoSync(
+  password: string,
+): Promise<MarketSyncResult & { catalog: CatalogResponse }> {
+  const response = await fetch('/api/admin/sync-market', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-admin-password': password,
+    },
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? 'Market Auto-Sync failed.');
+  }
+  return response.json() as Promise<MarketSyncResult & { catalog: CatalogResponse }>;
+}
+
+export async function autoFillSeries(
+  password: string,
+  title: string,
+): Promise<{ metadata: Partial<Series> }> {
+  const response = await fetch('/api/admin/autofill', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-admin-password': password,
+    },
+    body: JSON.stringify({ title }),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? 'Auto-Fill lookup failed.');
+  }
+  return response.json() as Promise<{ metadata: Partial<Series> }>;
+}
+
+export async function saveAdminSeries(
+  password: string,
+  series: Partial<Series> & { title: string },
+): Promise<{ series: Series; catalog: CatalogResponse }> {
+  const response = await fetch('/api/admin/series', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-admin-password': password,
+    },
+    body: JSON.stringify(series),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? 'Failed to save series.');
+  }
+  return response.json() as Promise<{ series: Series; catalog: CatalogResponse }>;
+}
+
+export async function deleteAdminSeries(
+  password: string,
+  id: string,
+): Promise<{ deletedId: string; catalog: CatalogResponse }> {
+  const response = await fetch(`/api/admin/series/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: { 'x-admin-password': password },
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? 'Failed to delete series.');
+  }
+  return response.json() as Promise<{ deletedId: string; catalog: CatalogResponse }>;
+}
+
+export async function saveMonetizationConfig(
+  password: string,
+  config: Partial<MonetizationConfig>,
+): Promise<{ monetization: MonetizationConfig; catalog: CatalogResponse }> {
+  const response = await fetch('/api/admin/monetization', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-admin-password': password,
+    },
+    body: JSON.stringify(config),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? 'Failed to save monetization settings.');
+  }
+  return response.json() as Promise<{ monetization: MonetizationConfig; catalog: CatalogResponse }>;
 }

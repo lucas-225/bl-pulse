@@ -11,10 +11,11 @@ import {
   type MediaTitle,
   type StreamingLink,
 } from '../shared/media';
+import type { MonetizationConfig } from '../shared/types';
 import { metadataForPath } from '../shared/seo';
 import { applyPageMetadata } from './seo';
 import { fetchMediaPage, fetchMediaTitle } from './api';
-import { resolvePlatformEpisodeUrl } from './components';
+import { AdBanner, resolvePlatformEpisodeUrl } from './components';
 
 const rankCaption = 'AniList Boys’ Love tag rank';
 
@@ -106,7 +107,7 @@ export function MediaCategoryCards({ liveActionCount }: { liveActionCount?: numb
   );
 }
 
-export function MediaLibraryPage({ type }: { type: AniListMediaType }) {
+export function MediaLibraryPage({ type, monetization }: { type: AniListMediaType; monetization?: MonetizationConfig }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const initialQ = searchParams.get('q') ?? '';
   const [draft, setDraft] = useState(initialQ);
@@ -357,6 +358,7 @@ export function MediaLibraryPage({ type }: { type: AniListMediaType }) {
       {loading && items.length === 0 && <div className="media-loading"><LoaderCircle className="spin" size={24} /><span>Finding strictly BL titles…</span></div>}
       {!loading && !error && filteredItems.length === 0 && <div className="media-empty"><Filter size={22} /><h2>No BL titles match these filters.</h2><p>Try clearing one of the filters or loading more pages from AniList.</p><button className="button button-secondary" onClick={clearAllFilters}>Reset filters</button></div>}
 
+      <AdBanner placement="infeed" monetization={monetization} />
       {filteredItems.length > 0 && <div className="media-grid">{filteredItems.map((item) => <MediaCard item={item} key={item.id} />)}</div>}
       {hasNextPage && <div className="media-more-wrap"><button className="button button-secondary media-more" onClick={() => void loadMore()} disabled={loadingMore}>{loadingMore ? <LoaderCircle className="spin" size={16} /> : null}{loadingMore ? 'Loading more' : 'Load more BL titles'}</button></div>}
       <div className="media-source-footnote">Filtered strictly to <strong>Boys’ Love</strong> titles with heterosexual/non-BL tags excluded. Select your preferred platform and episode/chapter on any title page.</div>
@@ -625,7 +627,7 @@ function EpisodeAndChapterPicker({ item }: { item: MediaTitle }) {
   );
 }
 
-export function MediaDetailPage({ type }: { type: AniListMediaType }) {
+export function MediaDetailPage({ type, monetization }: { type: AniListMediaType; monetization?: MonetizationConfig }) {
   const { id = '' } = useParams();
   const location = useLocation();
   const includeAdult = new URLSearchParams(location.search).get('mature') === '1';
@@ -696,6 +698,7 @@ export function MediaDetailPage({ type }: { type: AniListMediaType }) {
         </div>
       </section>
       <EpisodeAndChapterPicker item={item} key={item.id} />
+      <AdBanner placement="detail" monetization={monetization} />
     </div>
   );
 }

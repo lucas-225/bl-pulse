@@ -3,7 +3,14 @@ export type SeriesStatus = 'airing' | 'upcoming' | 'completed';
 export interface PlatformLink {
   name: string;
   url: string;
-  source: 'TMDB' | 'JustWatch' | 'official';
+  source?: 'official' | 'justwatch' | 'search';
+}
+
+export interface SeriesSeason {
+  seasonNumber: number;
+  title: string;
+  episodes: number;
+  year?: number | null;
 }
 
 export interface SeriesEpisodeLink {
@@ -13,30 +20,22 @@ export interface SeriesEpisodeLink {
   platform: string;
 }
 
-export interface SeriesSeason {
-  seasonNumber: number;
-  title: string;
-  episodes: number;
-  year?: number;
-  seriesId?: string;
-}
-
 export interface Series {
   id: string;
   title: string;
   country: string;
   status: SeriesStatus;
-  sourceUrl: string;
-  coverUrl?: string;
-  synopsis?: string;
+  platforms: PlatformLink[];
+  genres: string[];
   year?: number;
   releaseDate?: string;
   episodes?: number;
   seasons?: SeriesSeason[];
   episodeLinks?: SeriesEpisodeLink[];
-  genres: string[];
-  platforms: PlatformLink[];
-  updatedAt: string;
+  synopsis?: string;
+  coverUrl?: string;
+  sourceUrl: string;
+  updatedAt?: string;
   detailFetchedAt?: string;
 }
 
@@ -44,7 +43,82 @@ export interface EditorialPost {
   title: string;
   body: string;
   generatedAt: string;
-  source: 'AI-assisted' | 'BL Pulse';
+  updatedAt?: string;
+  source: 'BL Pulse' | 'AI-assisted' | 'Catalog fallback';
+}
+
+export interface AffiliateConfig {
+  gagaoolalaRef: string;
+  vikiAffiliateId: string;
+  iqiyiAffiliateId: string;
+  wetvAffiliateId: string;
+  crunchyrollAffiliateId: string;
+  tapasRef: string;
+  lezhinRef: string;
+  tappytoonRef: string;
+  mantaRef: string;
+  bookwalkerRef: string;
+}
+
+export interface SponsoredBannerConfig {
+  enabled: boolean;
+  badge: string;
+  eyebrow: string;
+  title: string;
+  synopsis: string;
+  studio: string;
+  country: string;
+  ctaLabel: string;
+  ctaUrl: string;
+  coverUrl: string;
+}
+
+export interface MonetizationConfig {
+  enableAds: boolean;
+  adsenseClientId: string;
+  headerAdSlot: string;
+  inFeedAdSlot: string;
+  detailAdSlot: string;
+  affiliates: AffiliateConfig;
+  sponsoredBanner: SponsoredBannerConfig;
+}
+
+export interface RedirectClickEvent {
+  title: string;
+  platform: string;
+  kind: 'series' | 'anime' | 'manga';
+  episode: number;
+  season: number;
+  targetUrl: string;
+  affiliateApplied: boolean;
+  timestamp: string;
+}
+
+export interface RedirectAnalyticsSummary {
+  totalRedirects: number;
+  affiliateClicks: number;
+  byCategory: {
+    series: number;
+    anime: number;
+    manga: number;
+  };
+  byPlatform: Record<string, number>;
+  topTitles: Array<{
+    title: string;
+    kind: 'series' | 'anime' | 'manga';
+    count: number;
+    lastClickedAt: string;
+  }>;
+  recentClicks: RedirectClickEvent[];
+}
+
+export interface MarketSyncResult {
+  added: Series[];
+  updated: Series[];
+  totalSeries: number;
+  syncedAt: string;
+  summary: string;
+  sourceUsed: string;
 }
 
 export interface CatalogResponse {
@@ -53,6 +127,6 @@ export interface CatalogResponse {
   lastChecked: string | null;
   sourceOnline: boolean;
   refreshing: boolean;
-  error?: string;
   editorial: EditorialPost | null;
+  monetization?: MonetizationConfig;
 }

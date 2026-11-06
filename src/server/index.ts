@@ -1,297 +1,511 @@
-import express from 'express';
-import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import 'dotenv/config';
+import fs from 'node:fs/promises';
+import http from 'node:http';
+import path from 'node:path';
+import express, { type NextFunction, type Request, type Response } from 'express';
+import { createServer as createViteServer } from 'vite';
+import {
+  ALL_ANI_LIST_TAG_RANKS,
+  DEFAULT_MINIMUM_BL_TAG_RANK,
+  type AniListMediaType,
+  type AniListSort,
+  type AniListTagRankFilter,
+  type MediaPageResponse,
+  type MediaTitle,
+} from '../shared/media.js';
+import type { MonetizationConfig, Series } from '../shared/types.js';
+import { browseAniList, getAniListMedia } from './anilist.js';
+import {
+  autoFillSeriesMetadata,
+  catalogIsStale,
+  getCatalogSnapshot,
+  getMonetizationConfig,
+  getSeriesById,
+  hydrateCatalog,
+  refreshCatalog,
+  removeSeries,
+  runMarketAutoSync,
+  updateMonetizationConfig,
+  upsertSeries,
+} from './catalog.js';
 import { initDatabase, isDatabaseReady } from './db.js';
-import { getCatalogSnapshot, getSeriesById, hydrateCatalog, refreshCatalog } from './catalog.js';
-import { AniListRateLimitError, browseAniList, getAniListMedia } from './anilist.js';
-import { ALL_ANI_LIST_TAG_RANKS, DEFAULT_MINIMUM_BL_TAG_RANK, type AniListMediaType, type AniListSort } from '../shared/media.js';
+import {
+  applyAffiliateParams,
+  getAnalyticsSummary,
+  hydrateAnalytics,
+  recordRedirectClick,
+  resolvePlatformRedirect,
+} from './redirect.js';
 import { configuredPublicOrigin, renderRobots, renderSeoDocument, renderSitemap } from './seo.js';
-import { resolvePlatformRedirect } from './redirect.js';
+import { isTmdbConfigured } from './tmdb.js';
 
-const app = express();
-const server = createServer(app);
-const PORT = Number(process.env.PORT ?? 3000);
-let transformIndexHtml: ((url: string, html: string) => Promise<string>) | null = null;
-let installViteMiddleware: () => void = () => undefined;
+const PORT = Number(process.env.PORT || 3000);
+const isProduction = process.env.NODE_ENV === 'production';
 
-app.disable('x-powered-by');
-app.use(express.json({ limit: '1mb' }));
+function getAdminPassword(): string {
+  return process.env.ADMIN_PASSWORD?.trim() || 'blpulse2026';
+}
 
-const API_WINDOW_MS = 60_000;
-const API_CLIENT_LIMIT = 15;
-const apiClientWindows = new Map<string, { resetAt: number; count: number }>();
-
-app.use('/api/media', (request, response, next) => {
-  const now = Date.now();
-  const clientKey = `${request.ip || request.socket.remoteAddress || 'unknown'}|${request.get('user-agent')?.slice(0, 120) ?? ''}`;
-  let window = apiClientWindows.get(clientKey);
-  if (!window || window.resetAt <= now) {
-    window = { resetAt: now + API_WINDOW_MS, count: 0 };
-    apiClientWindows.set(clientKey, window);
-  }
-  if (window.count >= API_CLIENT_LIMIT) {
-    const retryAfterSeconds = Math.max(1, Math.ceil((window.resetAt - now) / 1000));
-    response.setHeader('Retry-After', String(retryAfterSeconds));
-    response.setHeader('Cache-Control', 'no-store');
-    response.status(429).json({ message: `Too many AniList requests. Retry in ${retryAfterSeconds} seconds.`, retryAfterSeconds });
+function requireAdminAuth(req: Request, res: Response, next: NextFunction): void {
+  const provided =
+    (req.headers['x-admin-password'] as string | undefined)?.trim() ||
+    (typeof req.body?.password === 'string' ? req.body.password.trim() : '');
+  if (!provided || provided !== getAdminPassword()) {
+    res.status(401).json({ message: 'Invalid admin password. Default password is blpulse2026 unless ADMIN_PASSWORD is set.' });
     return;
-  }
-  window.count += 1;
-  if (apiClientWindows.size > 1_000) {
-    for (const [key, value] of apiClientWindows) if (value.resetAt <= now) apiClientWindows.delete(key);
   }
   next();
-});
+}
 
-app.get('/api/health', (_request, response) => {
-  response.json({ status: 'ok', database: isDatabaseReady() });
-});
+function parseMinimumRank(value: unknown): AniListTagRankFilter {
+  const numeric = Number(value);
+  return numeric === ALL_ANI_LIST_TAG_RANKS ? ALL_ANI_LIST_TAG_RANKS : DEFAULT_MINIMUM_BL_TAG_RANK;
+}
 
-app.get('/api/catalog', async (_request, response) => {
-  response.setHeader('Cache-Control', 'no-store');
-  response.json(getCatalogSnapshot());
-});
+function isAniListMediaType(value: string): value is AniListMediaType {
+  return value === 'ANIME' || value === 'MANGA';
+}
 
-app.post('/api/catalog/refresh', async (_request, response) => {
-  response.setHeader('Cache-Control', 'no-store');
-  try {
-    await refreshCatalog();
-    response.json(getCatalogSnapshot());
-  } catch (error) {
-    response.status(503).json({
-      ...getCatalogSnapshot(),
-      message: error instanceof Error ? error.message : 'Live-action discovery is waiting for a licensed data connection.',
+function isAniListSort(value: string): value is AniListSort {
+  return (
+    value === 'POPULARITY_DESC' ||
+    value === 'SCORE_DESC' ||
+    value === 'START_DATE_DESC' ||
+    value === 'START_DATE'
+  );
+}
+
+async function resolveSeoData(pathname: string): Promise<{
+  series?: Series;
+  mediaPage?: MediaPageResponse;
+  media?: MediaTitle;
+  homeAnimePage?: MediaPageResponse;
+  homeMangaPage?: MediaPageResponse;
+  mediaSourceUnavailable?: boolean;
+}> {
+  const pathClean = pathname.length > 1 ? pathname.replace(/\/+$/, '') : '/';
+  if (pathClean === '/') {
+    const [homeAnimePage, homeMangaPage] = await Promise.all([
+      browseAniList({ type: 'ANIME', page: 1, sort: 'POPULARITY_DESC', minimumRank: DEFAULT_MINIMUM_BL_TAG_RANK }).catch(() => undefined),
+      browseAniList({ type: 'MANGA', page: 1, sort: 'POPULARITY_DESC', minimumRank: DEFAULT_MINIMUM_BL_TAG_RANK }).catch(() => undefined),
+    ]);
+    return { homeAnimePage, homeMangaPage };
+  }
+
+  const seriesId = pathClean.match(/^\/series\/([^/]+)$/)?.[1];
+  if (seriesId) {
+    const decoded = decodeURIComponent(seriesId);
+    const series =
+      getCatalogSnapshot().series.find((item) => item.id === decoded) ??
+      (await getSeriesById(decoded).catch(() => undefined));
+    return { series };
+  }
+
+  if (pathClean === '/anime' || pathClean === '/manga') {
+    const type: AniListMediaType = pathClean === '/anime' ? 'ANIME' : 'MANGA';
+    try {
+      const mediaPage = await browseAniList({ type, page: 1, sort: 'POPULARITY_DESC', minimumRank: DEFAULT_MINIMUM_BL_TAG_RANK });
+      return { mediaPage };
+    } catch {
+      return { mediaSourceUnavailable: true };
+    }
+  }
+
+  const mediaMatch = pathClean.match(/^\/(anime|manga)\/(\d+)$/);
+  if (mediaMatch) {
+    const type: AniListMediaType = mediaMatch[1] === 'anime' ? 'ANIME' : 'MANGA';
+    try {
+      const media = (await getAniListMedia(type, Number(mediaMatch[2]), false, DEFAULT_MINIMUM_BL_TAG_RANK)) ?? undefined;
+      return { media };
+    } catch {
+      return { mediaSourceUnavailable: true };
+    }
+  }
+
+  return {};
+}
+
+async function start() {
+  const app = express();
+  const server = http.createServer(app);
+  app.use(express.json({ limit: '2mb' }));
+
+  // In production (Cloud Run / Koyeb), bind 0.0.0.0:${PORT} immediately so container health checks succeed with zero delay
+  let serverListening = false;
+  if (isProduction) {
+    server.listen(PORT, '0.0.0.0', () => {
+      console.log(`BL Pulse production server listening on http://0.0.0.0:${PORT}`);
     });
-  }
-});
-
-app.get('/api/series/:id', async (request, response) => {
-  response.setHeader('Cache-Control', 'no-store');
-  const record = await getSeriesById(String(request.params.id));
-  if (!record) {
-    response.status(404).json({ message: 'Series not found in the current source catalog.' });
-    return;
-  }
-  response.json(record);
-});
-
-app.get('/api/redirect', async (request, response) => {
-  response.setHeader('Cache-Control', 'no-store');
-  const platform = typeof request.query.platform === 'string' ? request.query.platform.trim() : '';
-  const title = typeof request.query.title === 'string' ? request.query.title.trim() : '';
-  const episode = Number(request.query.episode) || 1;
-  const season = Number(request.query.season) || 1;
-  const seasonTitle = typeof request.query.seasonTitle === 'string' ? request.query.seasonTitle.trim() : undefined;
-  const kindRaw = typeof request.query.kind === 'string' ? request.query.kind.trim() : 'series';
-  const kind = kindRaw === 'anime' || kindRaw === 'manga' ? kindRaw : 'series';
-  const baseUrl = typeof request.query.baseUrl === 'string' ? request.query.baseUrl.trim() : undefined;
-  const directUrl = typeof request.query.directUrl === 'string' ? request.query.directUrl.trim() : undefined;
-
-  if (!platform || !title) {
-    response.redirect(302, '/');
-    return;
+    serverListening = true;
   }
 
-  try {
-    const targetUrl = await resolvePlatformRedirect({
-      platform,
-      title,
-      episode,
-      season,
-      seasonTitle,
-      kind,
-      baseUrl,
-      directUrl,
+  // Hydrate database, catalog, and analytics
+  void (async () => {
+    await initDatabase();
+    await Promise.all([hydrateCatalog(), hydrateAnalytics()]);
+    if (isTmdbConfigured() && (getCatalogSnapshot().series.length === 0 || catalogIsStale())) {
+      void refreshCatalog();
+    }
+  })();
+
+  setInterval(() => {
+    if (isTmdbConfigured() && catalogIsStale()) {
+      void refreshCatalog();
+    }
+  }, 60 * 60 * 1000).unref();
+
+  app.get('/api/health', (_req, res) => {
+    const snapshot = getCatalogSnapshot();
+    res.json({
+      ok: true,
+      databaseReady: isDatabaseReady(),
+      tmdbConfigured: isTmdbConfigured(),
+      anilistConfigured: true,
+      seriesCount: snapshot.series.length,
+      lastRefreshed: snapshot.lastRefreshed,
+      sourceOnline: snapshot.sourceOnline,
     });
-    response.redirect(302, targetUrl);
-  } catch {
-    response.redirect(
-      302,
-      `https://www.youtube.com/results?search_query=${encodeURIComponent(`${title} Episode ${episode} Eng Sub`)}`,
+  });
+
+  // One-click downloadable JSON backup of the entire Live-Action catalog, platforms, episodes & monetization config
+  app.get('/api/export', (_req, res) => {
+    const snapshot = getCatalogSnapshot();
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="blpulse-catalog.json"');
+    res.send(
+      JSON.stringify(
+        {
+          exportedAt: new Date().toISOString(),
+          version: '2.0.0',
+          totalSeries: snapshot.series.length,
+          lastRefreshed: snapshot.lastRefreshed,
+          editorial: snapshot.editorial,
+          monetization: getMonetizationConfig(),
+          series: snapshot.series,
+        },
+        null,
+        2,
+      ),
     );
-  }
-});
+  });
 
-app.post('/api/media/search', async (request, response) => {
-  response.setHeader('Cache-Control', 'no-store');
-  const type = request.body?.type;
-  const sort = request.body?.sort;
-  const page = Number(request.body?.page);
-  const includeAdult = request.body?.includeAdult;
-  const minimumRank = request.body?.minimumRank;
-  const status = typeof request.body?.status === 'string' ? request.body.status : undefined;
-  const format = typeof request.body?.format === 'string' ? request.body.format : undefined;
-  const countryOfOrigin = typeof request.body?.countryOfOrigin === 'string' ? request.body.countryOfOrigin : undefined;
-  if ((type !== 'ANIME' && type !== 'MANGA')
-    || !['POPULARITY_DESC', 'SCORE_DESC', 'START_DATE_DESC', 'START_DATE'].includes(sort)
-    || !Number.isFinite(page)
-    || (includeAdult !== undefined && typeof includeAdult !== 'boolean')
-    || (minimumRank !== undefined && minimumRank !== ALL_ANI_LIST_TAG_RANKS && minimumRank !== DEFAULT_MINIMUM_BL_TAG_RANK && minimumRank !== 0 && minimumRank !== 70)
-    || (request.body?.search !== undefined && typeof request.body.search !== 'string')) {
-    response.status(400).json({ message: 'Choose Anime or Manga, a valid sort order, and a page number.' });
-    return;
-  }
-  try {
-    response.json(await browseAniList({
-      type: type as AniListMediaType,
-      page,
-      sort: sort as AniListSort,
-      search: request.body.search,
-      includeAdult: Boolean(includeAdult),
-      minimumRank: (minimumRank === ALL_ANI_LIST_TAG_RANKS || minimumRank === 0) ? ALL_ANI_LIST_TAG_RANKS : DEFAULT_MINIMUM_BL_TAG_RANK,
-      status,
-      format,
-      countryOfOrigin,
-    }));
-  } catch (error) {
-    if (error instanceof AniListRateLimitError) {
-      response.setHeader('Retry-After', String(error.retryAfterSeconds));
-      response.status(429).json({ message: error.message, retryAfterSeconds: error.retryAfterSeconds });
-      return;
+  app.get('/api/catalog', (_req, res) => {
+    res.json(getCatalogSnapshot());
+  });
+
+  app.post('/api/refresh', async (_req, res) => {
+    try {
+      await refreshCatalog();
+      res.json(getCatalogSnapshot());
+    } catch (error) {
+      res.status(503).json({
+        message: error instanceof Error ? error.message : 'Unable to refresh the catalog.',
+        catalog: getCatalogSnapshot(),
+      });
     }
-    response.status(502).json({ message: 'AniList could not be reached. Please try again shortly.' });
-  }
-});
+  });
 
-app.get('/api/media/:type/:id', async (request, response) => {
-  response.setHeader('Cache-Control', 'no-store');
-  const type = String(request.params.type).toLowerCase() === 'anime' ? 'ANIME'
-    : String(request.params.type).toLowerCase() === 'manga' ? 'MANGA' : null;
-  const id = Number(request.params.id);
-  if (!type || !Number.isSafeInteger(id) || id <= 0) {
-    response.status(400).json({ message: 'Choose a valid anime or manga title.' });
-    return;
-  }
-  try {
-    const item = await getAniListMedia(type, id, request.query.mature === '1', request.query.tagRank === 'all' ? ALL_ANI_LIST_TAG_RANKS : DEFAULT_MINIMUM_BL_TAG_RANK);
-    if (!item) {
-      response.status(404).json({ message: 'This title is not available in the current Boys’ Love catalog.' });
-      return;
+  app.get('/api/series/:id', async (req, res) => {
+    try {
+      const series = await getSeriesById(req.params.id);
+      if (!series) {
+        res.status(404).json({ message: 'Series not found in the live catalog.' });
+        return;
+      }
+      res.json(series);
+    } catch {
+      res.status(503).json({ message: 'Series details could not be loaded right now.' });
     }
-    response.json(item);
-  } catch (error) {
-    if (error instanceof AniListRateLimitError) {
-      response.setHeader('Retry-After', String(error.retryAfterSeconds));
-      response.status(429).json({ message: error.message, retryAfterSeconds: error.retryAfterSeconds });
-      return;
-    }
-    response.status(502).json({ message: 'AniList could not be reached. Please try again shortly.' });
-  }
-});
+  });
 
-app.get('/robots.txt', (_request, response) => {
-  response.setHeader('Cache-Control', 'public, max-age=300');
-  response.type('text/plain').send(renderRobots(configuredPublicOrigin()));
-});
+  // Legal 302 Redirect Engine with Affiliate Link Injection & Click Analytics
+  app.get('/api/redirect', async (req, res) => {
+    const platform = typeof req.query.platform === 'string' ? req.query.platform : 'YouTube';
+    const title = typeof req.query.title === 'string' ? req.query.title : '';
+    const episode = Math.max(1, Number(req.query.episode || 1));
+    const season = req.query.season ? Math.max(1, Number(req.query.season)) : 1;
+    const seasonTitle = typeof req.query.seasonTitle === 'string' ? req.query.seasonTitle : undefined;
+    const kind =
+      req.query.kind === 'anime' || req.query.kind === 'manga' ? req.query.kind : 'series';
+    const baseUrl = typeof req.query.baseUrl === 'string' ? req.query.baseUrl : undefined;
+    const directUrl = typeof req.query.directUrl === 'string' ? req.query.directUrl : undefined;
 
-app.get('/sitemap.xml', (_request, response) => {
-  const origin = configuredPublicOrigin();
-  if (!origin) {
-    response.setHeader('X-Robots-Tag', 'noindex');
-    response.setHeader('Cache-Control', 'no-store');
-    response.status(503).type('text/plain').send('Sitemap is unavailable until the public site origin is explicitly configured.');
-    return;
-  }
-  response.setHeader('Cache-Control', 'public, max-age=300');
-  response.type('application/xml').send(renderSitemap(origin, getCatalogSnapshot()));
-});
-
-async function start(): Promise<void> {
-  void initDatabase()
-    .then(() => hydrateCatalog())
-    .catch((err) => {
-      console.error('Background catalog hydration warning:', err);
-    });
-
-  const clientRoot = resolve(process.cwd(), 'dist/client');
-  const sourceHtml = resolve(process.cwd(), 'index.html');
-
-  if (process.env.NODE_ENV === 'production') {
-    app.use(express.static(clientRoot, { maxAge: '1h', index: false }));
-  } else {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: {
-        middlewareMode: true,
-        hmr: process.env.DISABLE_HMR === 'true' ? false : { server },
-        watch: process.env.DISABLE_HMR === 'true' ? null : {},
-      },
-      appType: 'spa',
-    });
-    transformIndexHtml = (url, html) => vite.transformIndexHtml(url, html);
-    installViteMiddleware = () => { app.use(vite.middlewares); };
-  }
-
-  app.use(async (request, response, next) => {
-    const pathname = request.path;
-    if (request.method !== 'GET'
-      || pathname.startsWith('/api/')
-      || pathname.startsWith('/manus-storage/')
-      || pathname.startsWith('/@')
-      || pathname === '/manus-routes.json'
-      || /\.[a-z\d]{1,8}$/i.test(pathname)) {
-      next();
+    if (!title.trim()) {
+      res.redirect(302, baseUrl || 'https://www.youtube.com');
       return;
     }
 
     try {
-      const catalog = getCatalogSnapshot();
-      const detailMatch = pathname.match(/^\/series\/([^/]+)\/?$/);
-      let series;
-      if (detailMatch) {
-        let id: string;
-        try {
-          id = decodeURIComponent(detailMatch[1]);
-        } catch {
-          id = '';
-        }
-        if (id) series = await getSeriesById(id) ?? undefined;
-      }
+      const rawTargetUrl = await resolvePlatformRedirect({
+        platform,
+        title,
+        episode,
+        season,
+        seasonTitle,
+        kind,
+        baseUrl,
+        directUrl,
+      });
 
-      const mediaListingMatch = pathname.match(/^\/(anime|manga)\/?$/);
-      const mediaDetailMatch = pathname.match(/^\/(anime|manga)\/(\d+)\/?$/);
-      let mediaPage;
-      let mediaItem;
-      let mediaSourceUnavailable = false;
-      let homeAnimePage;
-      let homeMangaPage;
-      if (mediaListingMatch) {
-        const type = mediaListingMatch[1] === 'anime' ? 'ANIME' : 'MANGA';
-        try { mediaPage = await browseAniList({ type, page: 1, sort: 'POPULARITY_DESC' }); } catch { mediaSourceUnavailable = true; }
-      } else if (mediaDetailMatch) {
-        const type = mediaDetailMatch[1] === 'anime' ? 'ANIME' : 'MANGA';
-        try { mediaItem = await getAniListMedia(type, Number(mediaDetailMatch[2]), request.query.mature === '1', request.query.tagRank === 'all' ? ALL_ANI_LIST_TAG_RANKS : DEFAULT_MINIMUM_BL_TAG_RANK) ?? undefined; } catch { mediaSourceUnavailable = true; }
-      } else if (pathname === '/') {
-        [homeAnimePage, homeMangaPage] = await Promise.all([
-          browseAniList({ type: 'ANIME', page: 1, sort: 'POPULARITY_DESC', minimumRank: DEFAULT_MINIMUM_BL_TAG_RANK }).catch(() => undefined),
-          browseAniList({ type: 'MANGA', page: 1, sort: 'POPULARITY_DESC', minimumRank: DEFAULT_MINIMUM_BL_TAG_RANK }).catch(() => undefined),
-        ]);
-      }
+      const monetization = getMonetizationConfig();
+      const { url: finalUrl, affiliateApplied } = applyAffiliateParams(
+        rawTargetUrl,
+        platform,
+        monetization.affiliates,
+      );
 
-      let template = await readFile(process.env.NODE_ENV === 'production' ? resolve(clientRoot, 'index.html') : sourceHtml, 'utf8');
-      if (transformIndexHtml) template = await transformIndexHtml(request.originalUrl, template);
-      const page = renderSeoDocument(template, pathname, catalog, series, mediaPage, mediaItem, homeAnimePage, homeMangaPage, mediaSourceUnavailable);
-      response.status(page.status);
-      response.setHeader('Content-Type', 'text/html; charset=utf-8');
-      response.setHeader('Cache-Control', page.status === 200 ? 'public, max-age=0' : 'no-store');
-      if (page.status === 503) response.setHeader('Retry-After', '60');
-      if (page.metadata.noindex) response.setHeader('X-Robots-Tag', 'noindex, follow');
-      response.send(page.html);
-    } catch (error) {
-      next(error);
+      recordRedirectClick({
+        title,
+        platform,
+        kind,
+        episode,
+        season,
+        targetUrl: finalUrl,
+        affiliateApplied,
+        timestamp: new Date().toISOString(),
+      });
+
+      res.redirect(302, finalUrl);
+    } catch {
+      res.redirect(
+        302,
+        baseUrl || `https://www.youtube.com/results?search_query=${encodeURIComponent(`${title} Episode ${episode}`)}`,
+      );
     }
   });
 
-  installViteMiddleware();
+  app.get('/api/media', async (req, res) => {
+    const rawType = typeof req.query.type === 'string' ? req.query.type.toUpperCase() : 'ANIME';
+    const rawSort = typeof req.query.sort === 'string' ? req.query.sort.toUpperCase() : 'POPULARITY_DESC';
+    const type: AniListMediaType = isAniListMediaType(rawType) ? rawType : 'ANIME';
+    const sort: AniListSort = isAniListSort(rawSort) ? rawSort : 'POPULARITY_DESC';
+    const page = Number(req.query.page || 1);
+    const search = typeof req.query.search === 'string' ? req.query.search : '';
+    const includeAdult = req.query.includeAdult === 'true' || req.query.includeAdult === '1';
+    const minimumRank = parseMinimumRank(req.query.minRank);
+    const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+    const format = typeof req.query.format === 'string' ? req.query.format : undefined;
+    const countryOfOrigin = typeof req.query.country === 'string' ? req.query.country : undefined;
 
-  server.listen(PORT, '0.0.0.0', () => {
-    console.info(`BL Pulse listening on port ${PORT}.`);
+    try {
+      res.json(
+        await browseAniList({
+          type,
+          page,
+          sort,
+          search,
+          includeAdult,
+          minimumRank,
+          status,
+          format,
+          countryOfOrigin,
+        }),
+      );
+    } catch (error) {
+      res.status(503).json({
+        message: error instanceof Error ? error.message : 'Unable to load titles from AniList.',
+      });
+    }
   });
 
+  app.get('/api/media/:type/:id', async (req, res) => {
+    const rawType = req.params.type.toUpperCase();
+    if (!isAniListMediaType(rawType)) {
+      res.status(400).json({ message: 'Media type must be anime or manga.' });
+      return;
+    }
+
+    const includeAdult = req.query.includeAdult === 'true' || req.query.includeAdult === '1';
+    const minimumRank = parseMinimumRank(req.query.minRank);
+
+    try {
+      const item = await getAniListMedia(rawType, Number(req.params.id), includeAdult, minimumRank);
+      if (!item) {
+        res.status(404).json({ message: 'Title not found in the AniList Boys’ Love catalog.' });
+        return;
+      }
+      res.json(item);
+    } catch (error) {
+      res.status(503).json({
+        message: error instanceof Error ? error.message : 'Unable to load title details from AniList.',
+      });
+    }
+  });
+
+  // ============================================================================
+  // PASSWORD-PROTECTED ADMIN & MONETIZATION ENDPOINTS (/api/admin/*)
+  // ============================================================================
+
+  app.post('/api/admin/verify', requireAdminAuth, (_req, res) => {
+    const snapshot = getCatalogSnapshot();
+    res.json({
+      ok: true,
+      databaseReady: isDatabaseReady(),
+      seriesCount: snapshot.series.length,
+      lastRefreshed: snapshot.lastRefreshed,
+      monetization: getMonetizationConfig(),
+      analytics: getAnalyticsSummary(),
+    });
+  });
+
+  app.get('/api/admin/analytics', requireAdminAuth, (_req, res) => {
+    res.json({
+      databaseReady: isDatabaseReady(),
+      analytics: getAnalyticsSummary(),
+      monetization: getMonetizationConfig(),
+    });
+  });
+
+  app.post('/api/admin/sync-market', requireAdminAuth, async (_req, res) => {
+    try {
+      const result = await runMarketAutoSync();
+      res.json({
+        ...result,
+        catalog: getCatalogSnapshot(),
+      });
+    } catch (error) {
+      res.status(500).json({
+        message: error instanceof Error ? error.message : 'Market Auto-Sync encountered an error.',
+      });
+    }
+  });
+
+  app.post('/api/admin/autofill', requireAdminAuth, async (req, res) => {
+    const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+    if (!title) {
+      res.status(400).json({ message: 'Please provide a series title.' });
+      return;
+    }
+    try {
+      const metadata = await autoFillSeriesMetadata(title);
+      res.json({ metadata });
+    } catch (error) {
+      res.status(500).json({
+        message: error instanceof Error ? error.message : 'Could not auto-fill metadata for this title.',
+      });
+    }
+  });
+
+  app.post('/api/admin/series', requireAdminAuth, async (req, res) => {
+    const payload = req.body as Partial<Series> & { title?: string };
+    if (!payload?.title?.trim()) {
+      res.status(400).json({ message: 'Series title is required.' });
+      return;
+    }
+    try {
+      const saved = await upsertSeries({ ...payload, title: payload.title.trim() });
+      res.json({
+        series: saved,
+        catalog: getCatalogSnapshot(),
+      });
+    } catch (error) {
+      res.status(500).json({
+        message: error instanceof Error ? error.message : 'Failed to save series.',
+      });
+    }
+  });
+
+  app.delete('/api/admin/series/:id', requireAdminAuth, async (req, res) => {
+    try {
+      const removed = await removeSeries(req.params.id);
+      if (!removed) {
+        res.status(404).json({ message: 'Series not found.' });
+        return;
+      }
+      res.json({
+        deletedId: req.params.id,
+        catalog: getCatalogSnapshot(),
+      });
+    } catch (error) {
+      res.status(500).json({
+        message: error instanceof Error ? error.message : 'Failed to delete series.',
+      });
+    }
+  });
+
+  app.put('/api/admin/monetization', requireAdminAuth, async (req, res) => {
+    try {
+      const patch = req.body as Partial<MonetizationConfig>;
+      const updated = await updateMonetizationConfig(patch);
+      res.json({
+        monetization: updated,
+        catalog: getCatalogSnapshot(),
+      });
+    } catch (error) {
+      res.status(500).json({
+        message: error instanceof Error ? error.message : 'Failed to update monetization settings.',
+      });
+    }
+  });
+
+  app.get('/robots.txt', (_req, res) => {
+    res.type('text/plain; charset=utf-8').send(renderRobots(configuredPublicOrigin()));
+  });
+
+  app.get('/sitemap.xml', (_req, res) => {
+    const origin = configuredPublicOrigin();
+    if (!origin) {
+      res.status(404).type('text/plain; charset=utf-8').send('Public origin is not configured.');
+      return;
+    }
+    res.type('application/xml; charset=utf-8').send(renderSitemap(origin, getCatalogSnapshot()));
+  });
+
+  if (isProduction) {
+    const clientDir = path.resolve(process.cwd(), 'dist/client');
+    const indexPath = path.join(clientDir, 'index.html');
+    const template = await fs.readFile(indexPath, 'utf8');
+    app.use(express.static(clientDir, { index: false }));
+    app.get('*', async (req, res) => {
+      const seoData = await resolveSeoData(req.path);
+      const doc = renderSeoDocument(
+        template,
+        req.path,
+        getCatalogSnapshot(),
+        seoData.series,
+        seoData.mediaPage,
+        seoData.media,
+        seoData.homeAnimePage,
+        seoData.homeMangaPage,
+        seoData.mediaSourceUnavailable,
+      );
+      res.status(doc.status).setHeader('Content-Type', 'text/html; charset=utf-8').send(doc.html);
+    });
+  } else {
+    const vite = await createViteServer({
+      server: { middlewareMode: true, hmr: process.env.DISABLE_HMR === 'true' ? false : { server } },
+      appType: 'custom',
+    });
+    const indexPath = path.resolve(process.cwd(), 'index.html');
+    app.use(vite.middlewares);
+    app.get('*', async (req, res, next) => {
+      try {
+        const rawTemplate = await fs.readFile(indexPath, 'utf8');
+        const transformed = await vite.transformIndexHtml(req.originalUrl, rawTemplate);
+        const seoData = await resolveSeoData(req.path);
+        const doc = renderSeoDocument(
+          transformed,
+          req.path,
+          getCatalogSnapshot(),
+          seoData.series,
+          seoData.mediaPage,
+          seoData.media,
+          seoData.homeAnimePage,
+          seoData.homeMangaPage,
+          seoData.mediaSourceUnavailable,
+        );
+        res.status(doc.status).setHeader('Content-Type', 'text/html; charset=utf-8').send(doc.html);
+      } catch (error) {
+        next(error);
+      }
+    });
+  }
+
+  if (!serverListening) {
+    server.listen(PORT, '0.0.0.0', () => {
+      console.log(`BL Pulse running on http://0.0.0.0:${PORT}`);
+    });
+  }
 }
 
-void start().catch((error) => {
-  console.error('BL Pulse could not start.', error instanceof Error ? error.message : 'Unknown startup error.');
-  process.exitCode = 1;
-});
+void start();

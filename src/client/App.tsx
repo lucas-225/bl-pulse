@@ -5,7 +5,21 @@ import { DEFAULT_MINIMUM_BL_TAG_RANK, type MediaTitle } from '../shared/media';
 import type { CatalogResponse, Series } from '../shared/types';
 import { metadataForPath } from '../shared/seo';
 import { fetchCatalog, fetchMediaPage, fetchSeries, refreshCatalog as requestRefresh } from './api';
-import { Footer, Freshness, Header, MixedCatalogRail, resolvePlatformEpisodeUrl, SectionLink, SeriesCard, SeriesRail, StatusPill, type MixedItem } from './components';
+import { AdminPage } from './AdminPage';
+import {
+  AdBanner,
+  Footer,
+  Freshness,
+  Header,
+  MixedCatalogRail,
+  resolvePlatformEpisodeUrl,
+  SectionLink,
+  SeriesCard,
+  SeriesRail,
+  SponsoredSpotlightBanner,
+  StatusPill,
+  type MixedItem,
+} from './components';
 import { applyPageMetadata } from './seo';
 import { MediaCard, MediaCategoryCards, MediaDetailPage, MediaLibraryPage, MediaSpotlightRail } from './MediaPages';
 
@@ -115,16 +129,18 @@ function App() {
         refreshAvailable={Boolean(catalog.sourceOnline || catalog.lastChecked || catalog.series.length)}
         seriesCatalog={catalog.series}
       />
+      <AdBanner placement="header" monetization={catalog.monetization} />
       {notice && <div className={`notice-bar ${notice.includes('could not') || notice.includes('couldn’t') || notice.includes('not reach') ? 'notice-error' : ''}`} role="status">{notice}<button onClick={() => setNotice('')} aria-label="Dismiss notice">×</button></div>}
       <main>
         <Routes>
           <Route path="/" element={<HomePage catalog={status} loading={loading} />} />
           <Route path="/discover" element={<DiscoverPage catalog={status} loading={loading} />} />
           <Route path="/series/:id" element={<SeriesPage catalog={status} updateOne={updateOne} />} />
-          <Route path="/anime" element={<MediaLibraryPage type="ANIME" />} />
-          <Route path="/anime/:id" element={<MediaDetailPage type="ANIME" />} />
-          <Route path="/manga" element={<MediaLibraryPage type="MANGA" />} />
-          <Route path="/manga/:id" element={<MediaDetailPage type="MANGA" />} />
+          <Route path="/anime" element={<MediaLibraryPage type="ANIME" monetization={catalog.monetization} />} />
+          <Route path="/anime/:id" element={<MediaDetailPage type="ANIME" monetization={catalog.monetization} />} />
+          <Route path="/manga" element={<MediaLibraryPage type="MANGA" monetization={catalog.monetization} />} />
+          <Route path="/manga/:id" element={<MediaDetailPage type="MANGA" monetization={catalog.monetization} />} />
+          <Route path="/admin" element={<AdminPage catalog={status} onCatalogUpdated={setCatalog} />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
@@ -350,6 +366,8 @@ function HomePage({ catalog, loading }: { catalog: CatalogResponse; loading: boo
 
         <MediaCategoryCards liveActionCount={catalog.series.length} />
 
+        <SponsoredSpotlightBanner banner={catalog.monetization?.sponsoredBanner} />
+
         {/* Explore Rails for all 3 categories on the Home Page */}
         <SeriesRail
           title="BL Live-Action Series to explore"
@@ -357,6 +375,7 @@ function HomePage({ catalog, loading }: { catalog: CatalogResponse; loading: boo
           series={liveActionExplore}
           action={<SectionLink to="/discover">Open Live-Action</SectionLink>}
         />
+        <AdBanner placement="infeed" monetization={catalog.monetization} />
         <MediaSpotlightRail type="ANIME" items={animePicks} />
         <MediaSpotlightRail type="MANGA" items={mangaPicks} />
 
@@ -464,6 +483,7 @@ function DiscoverPage({ catalog, loading }: { catalog: CatalogResponse; loading:
         <p className="filter-hint">Showing strictly BL Live-Action series only. Open any series to choose your streaming platform (YouTube, Viki, iQIYI, GagaOOLala, WeTV, Netflix, etc.) and select an episode.</p>
       </div>
       <div className="results-line"><div><strong>{filtered.length.toLocaleString()}</strong> live-action series<span> · </span><span>{status === 'all' ? 'All statuses' : status === 'airing' ? 'Airing now' : status === 'upcoming' ? 'Coming soon' : 'Completed'}</span></div><button className="clear-filters" onClick={clearFilters}>Clear filters</button></div>
+      <AdBanner placement="infeed" monetization={catalog.monetization} />
       {loading && catalog.sourceOnline && catalog.series.length === 0 ? <LoadingState label="Loading the source catalog" /> : filtered.length > 0 ? <div className="discover-grid">{filtered.map((item) => <SeriesCard key={item.id} series={item} />)}</div> : !catalog.sourceOnline && catalog.series.length === 0 ? <EmptyState /> : <div className="empty-results"><div className="empty-mark"><Filter size={21} /></div><h2>No series match these filters.</h2><p>Try another title, country, platform, or category.</p><button className="button button-secondary" onClick={clearFilters}>Reset discovery filters</button></div>}
       {!catalog.sourceOnline && catalog.series.length > 0 && <div className="stale-banner"><Radio size={16} /><span>The live-action source is offline. Showing only the last saved TMDB catalog snapshot.</span></div>}
     </div>
@@ -746,6 +766,9 @@ function SeriesPage({ catalog, updateOne }: { catalog: CatalogResponse; updateOn
             </p>
           </div>
         </section>
+        <div style={{ gridColumn: '1 / -1' }}>
+          <AdBanner placement="detail" monetization={catalog.monetization} />
+        </div>
       </div>
     </div>
   );

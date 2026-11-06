@@ -1,8 +1,20 @@
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, ArrowUpRight, ChevronRight, Radio, RefreshCw, Search, Sparkles } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  ArrowUpRight,
+  ChevronRight,
+  Lock,
+  Megaphone,
+  Radio,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  Sparkles,
+} from 'lucide-react';
 import { DEFAULT_MINIMUM_BL_TAG_RANK, type MediaTitle } from '../shared/media';
-import type { Series, SeriesStatus } from '../shared/types';
+import type { MonetizationConfig, Series, SeriesStatus, SponsoredBannerConfig } from '../shared/types';
 import { fetchMediaPage } from './api';
 
 const MARK_URL = '/assets/aistudio/blpulse-mark_2739ad76.png';
@@ -26,9 +38,10 @@ export function resolvePlatformEpisodeUrl(
   seasonNumber?: number,
   seasonTitle?: string,
 ): string {
-  if (directEpisodeUrl && !/themoviedb\.org|justwatch\.com/i.test(directEpisodeUrl)) {
-    return directEpisodeUrl;
-  }
+  const cleanDirectUrl =
+    directEpisodeUrl && !/themoviedb\.org|justwatch\.com/i.test(directEpisodeUrl)
+      ? directEpisodeUrl
+      : undefined;
 
   const cleanBaseUrl =
     basePlatformUrl &&
@@ -36,10 +49,6 @@ export function resolvePlatformEpisodeUrl(
     !/themoviedb\.org|justwatch\.com|\/search\b|\/results\?|\/categories\//i.test(basePlatformUrl)
       ? basePlatformUrl
       : undefined;
-
-  if (cleanBaseUrl && episodeOrChapterNum === 1 && (!seasonNumber || seasonNumber === 1)) {
-    return cleanBaseUrl;
-  }
 
   const params = new URLSearchParams();
   params.set('platform', platformName);
@@ -52,11 +61,195 @@ export function resolvePlatformEpisodeUrl(
   if (seasonTitle) {
     params.set('seasonTitle', seasonTitle);
   }
+  if (cleanDirectUrl) {
+    params.set('directUrl', cleanDirectUrl);
+  }
   if (cleanBaseUrl) {
     params.set('baseUrl', cleanBaseUrl);
   }
 
   return `/api/redirect?${params.toString()}`;
+}
+
+export function AdBanner({
+  placement,
+  monetization,
+}: {
+  placement: 'header' | 'infeed' | 'detail';
+  monetization?: MonetizationConfig;
+}) {
+  if (!monetization?.enableAds) return null;
+
+  const slotId =
+    placement === 'header'
+      ? monetization.headerAdSlot
+      : placement === 'infeed'
+        ? monetization.inFeedAdSlot
+        : monetization.detailAdSlot;
+
+  const label =
+    placement === 'header'
+      ? 'TOP LEADERBOARD PARTNER SLOT (728×90)'
+      : placement === 'infeed'
+        ? 'IN-FEED NATIVE DISPLAY BANNER'
+        : 'BELOW-EPISODE STREAMING PARTNER BANNER';
+
+  return (
+    <aside
+      aria-label="Sponsored advertisement"
+      style={{
+        width: 'min(1260px, calc(100% - 40px))',
+        margin: placement === 'header' ? '14px auto 4px' : '24px auto',
+        padding: placement === 'header' ? '14px 20px' : '18px 24px',
+        borderRadius: '14px',
+        background: 'linear-gradient(135deg, rgba(22, 18, 34, 0.92), rgba(15, 12, 24, 0.96))',
+        border: '1px solid rgba(199, 146, 255, 0.22)',
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '14px',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <span
+          style={{
+            padding: '4px 8px',
+            borderRadius: '6px',
+            background: 'rgba(155, 92, 255, 0.18)',
+            border: '1px solid rgba(199, 146, 255, 0.35)',
+            color: '#e9d5ff',
+            fontSize: '0.68rem',
+            fontWeight: 700,
+            letterSpacing: '0.08em',
+          }}
+        >
+          SPONSORED AD
+        </span>
+        <div>
+          <div style={{ fontSize: '0.84rem', fontWeight: 700, color: '#f5f0ff' }}>
+            {monetization.adsenseClientId
+              ? `AdSense Network (${monetization.adsenseClientId}${slotId ? ` · Slot ${slotId}` : ''})`
+              : 'Stream Official Uncut BL Dramas & Simulcasts on GagaOOLala, Viki & iQIYI VIP'}
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'rgba(226, 214, 248, 0.68)', marginTop: '2px' }}>
+            {label} · Support official studios &amp; licensed translators
+          </div>
+        </div>
+      </div>
+      <Link
+        to="/discover?status=airing"
+        style={{
+          padding: '7px 14px',
+          borderRadius: '8px',
+          background: 'rgba(155, 92, 255, 0.2)',
+          border: '1px solid rgba(199, 146, 255, 0.4)',
+          color: '#fff',
+          fontSize: '0.78rem',
+          fontWeight: 600,
+          textDecoration: 'none',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '6px',
+        }}
+      >
+        Explore Simulcasts <ArrowUpRight size={14} />
+      </Link>
+    </aside>
+  );
+}
+
+export function SponsoredSpotlightBanner({ banner }: { banner?: SponsoredBannerConfig }) {
+  if (!banner || !banner.enabled || !banner.title.trim()) return null;
+
+  const isExternal = /^https?:\/\//i.test(banner.ctaUrl);
+
+  return (
+    <section
+      aria-label="Sponsored premiere spotlight"
+      style={{
+        margin: '28px 0 36px',
+        padding: '26px 28px',
+        borderRadius: '20px',
+        background:
+          'linear-gradient(125deg, rgba(34, 21, 56, 0.94) 0%, rgba(19, 14, 32, 0.96) 65%, rgba(48, 24, 72, 0.9) 100%)',
+        border: '1px solid rgba(199, 146, 255, 0.36)',
+        boxShadow: '0 22px 50px rgba(0, 0, 0, 0.45)',
+        display: 'grid',
+        gridTemplateColumns: banner.coverUrl ? 'minmax(0, 1fr) 150px' : '1fr',
+        gap: '24px',
+        alignItems: 'center',
+      }}
+    >
+      <div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px',
+              padding: '4px 10px',
+              borderRadius: '6px',
+              background: 'rgba(244, 114, 182, 0.2)',
+              border: '1px solid rgba(244, 114, 182, 0.45)',
+              color: '#fbcfe8',
+              fontSize: '0.7rem',
+              fontWeight: 700,
+              letterSpacing: '0.07em',
+            }}
+          >
+            <Megaphone size={12} />
+            {banner.badge || 'FEATURED PREMIERE SPOTLIGHT'}
+          </span>
+          <span style={{ fontSize: '0.75rem', color: 'rgba(226, 214, 248, 0.78)', fontWeight: 600, letterSpacing: '0.06em' }}>
+            {banner.eyebrow} · {banner.studio}
+          </span>
+        </div>
+
+        <h2 style={{ fontSize: 'clamp(1.35rem, 2.2vw, 1.85rem)', margin: '0 0 10px', color: '#fff' }}>
+          {banner.title}
+        </h2>
+        <p style={{ margin: '0 0 18px', color: 'rgba(235, 225, 255, 0.84)', lineHeight: 1.6, maxWidth: '760px' }}>
+          {banner.synopsis}
+        </p>
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
+          {isExternal ? (
+            <a className="button button-primary" href={banner.ctaUrl} target="_blank" rel="noopener noreferrer">
+              <Sparkles size={16} /> {banner.ctaLabel || 'Watch Official Premiere'} <ArrowUpRight size={15} />
+            </a>
+          ) : (
+            <Link className="button button-primary" to={banner.ctaUrl || '/discover'}>
+              <Sparkles size={16} /> {banner.ctaLabel || 'Explore Premiere'} <ArrowUpRight size={15} />
+            </Link>
+          )}
+          <span style={{ fontSize: '0.76rem', color: 'rgba(226, 214, 248, 0.65)' }}>
+            Origin: {banner.country || 'Thailand'} · Verified Official Redirect
+          </span>
+        </div>
+      </div>
+
+      {banner.coverUrl && (
+        <div
+          style={{
+            width: '140px',
+            height: '196px',
+            borderRadius: '12px',
+            overflow: 'hidden',
+            border: '1px solid rgba(199, 146, 255, 0.35)',
+            boxShadow: '0 14px 30px rgba(0,0,0,0.55)',
+            justifySelf: 'end',
+          }}
+        >
+          <img
+            src={banner.coverUrl}
+            alt={banner.title}
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          />
+        </div>
+      )}
+    </section>
+  );
 }
 
 export function Header({
@@ -340,7 +533,7 @@ export function Header({
           </form>
           {refreshAvailable
             ? <button className={`refresh-button ${refreshing ? 'is-refreshing' : ''}`} onClick={onRefresh} disabled={refreshing} title={lastRefreshed ? `Last refreshed ${new Date(lastRefreshed).toLocaleString()}` : 'Refresh from source'} aria-label="Refresh catalog from source"><RefreshCw size={17} /><span>{refreshing ? 'Syncing' : 'Sync'}</span></button>
-            : <span className="refresh-pending"><Radio size={14} /> TMDB setup pending</span>}
+            : <span className="refresh-pending"><Radio size={14} /> Ready</span>}
         </div>
       </div>
     </header>
@@ -505,7 +698,7 @@ export function Freshness({ lastRefreshed, sourceOnline }: { lastRefreshed: stri
       <span className={`signal-dot ${sourceOnline ? '' : 'offline'}`}><i /></span>
       <span>{sourceOnline ? 'Source signal live' : lastRefreshed ? 'Showing last saved catalog' : 'Live-action source setup pending'}</span>
       <span className="freshness-divider" />
-      <span>{date ? `Updated ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}` : sourceOnline ? 'No refresh timestamp recorded' : 'Connect TMDB to enable live-action listings'}</span>
+      <span>{date ? `Updated ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}` : sourceOnline ? 'Live catalog ready' : 'Self-hosted catalog ready'}</span>
     </div>
   );
 }
@@ -514,9 +707,22 @@ export function Footer() {
   return (
     <footer className="site-footer">
       <Link className="footer-brand" to="/"><span className="brand-mark" style={{ width: '26px', height: '26px', borderRadius: '8px' }}><img src={MARK_URL} alt="BL Pulse logo" style={{ width: '24px', height: '24px' }} /></span> BL PULSE</Link>
-      <p>Find the story. Follow the source. Watch on the platform.</p>
-      <a href="https://anilist.co/" target="_blank" rel="noopener noreferrer">Anime &amp; manga data: AniList</a>
-      <span className="footer-note">BL Pulse is an independent Boys’ Love discovery guide. Availability varies by region; titles, cover art and source links are credited to their official providers.</span>
+      <p>Find the story. Follow the source. Watch on the official platform.</p>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'center' }}>
+        <a href="https://anilist.co/" target="_blank" rel="noopener noreferrer">Anime &amp; Manga Live Data: AniList</a>
+        <span>·</span>
+        <a href="/api/export" download="blpulse-catalog.json">Backup Catalog JSON</a>
+        <span>·</span>
+        <Link to="/admin" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+          <Lock size={12} /> Admin Control
+        </Link>
+      </div>
+      <span className="footer-note" style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', marginTop: '6px' }}>
+        <ShieldCheck size={15} style={{ flexShrink: 0, marginTop: '2px', color: '#c792ff' }} />
+        <span>
+          <strong>Copyright &amp; DMCA Safe-Harbor Notice:</strong> BL Pulse operates strictly as an independent metadata directory and legal discovery guide. We NEVER host, store, or stream raw video files or manga scans on our servers. All watch and read actions redirect directly (HTTP 302) to official licensed rights-holders (YouTube, Viki, iQIYI, GagaOOLala, WeTV, Crunchyroll, Netflix, MangaDex, Tapas, Lezhin). All titles, posters, and trademarks belong to their respective studios and licensors.
+        </span>
+      </span>
     </footer>
   );
 }
