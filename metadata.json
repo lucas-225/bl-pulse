@@ -1,0 +1,8 @@
+{
+  "name": "BL Pulse ",
+  "description": "Copyright-safe global directory for TV series, anime, and manga with live episode guides, chapter indexes, and direct official streaming and reading platform redirects.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

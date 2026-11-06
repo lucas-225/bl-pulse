@@ -1,0 +1,3441 @@
+import type { CatalogResponse, EditorialPost, PlatformLink, Series, SeriesEpisodeLink, SeriesSeason } from '../shared/types.js';
+import { loadSeries, parseEditorial, readMeta, saveSeries, writeMeta } from './db.js';
+import { buildEditorial } from './editorial.js';
+import { fetchTmdbCatalog, fetchTmdbWatchProviders, isTmdbConfigured } from './tmdb.js';
+
+function cleanTitleForSearch(title: string): string {
+  return title
+    .replace(/\s*\((?:TH|JP|KR|TW|CN|PH|US|UK|FR|NO|SE|Season[^)]*)\)\s*/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizePlatformUrl(url: string, title: string): string {
+  const cleaned = cleanTitleForSearch(title);
+  // If a search URL contains parenthetical country tags like (TH) or (JP), replace with clean title so the platform's search always finds the series
+  if (/\((?:TH|JP|KR|TW|CN|PH|Season[^)]*)\)/i.test(decodeURIComponent(url))) {
+    if (url.includes('viki.com')) return `https://www.viki.com/search?q=${encodeURIComponent(cleaned)}`;
+    if (url.includes('iq.com')) return `https://www.iq.com/search?query=${encodeURIComponent(cleaned)}`;
+    if (url.includes('gagaoolala.com')) return `https://www.gagaoolala.com/en/search?q=${encodeURIComponent(cleaned)}`;
+    if (url.includes('wetv.vip')) return `https://wetv.vip/en/search/${encodeURIComponent(cleaned)}`;
+    if (url.includes('youtube.com')) return `https://www.youtube.com/results?search_query=${encodeURIComponent(`${cleaned} Episode 1 BL Eng Sub`)}`;
+  }
+  return url;
+}
+
+function ensureMultiPlatforms(platforms: PlatformLink[], title: string): PlatformLink[] {
+  const result: PlatformLink[] = [];
+  const seen = new Set<string>();
+  const cleanedTitle = cleanTitleForSearch(title);
+
+  // Always include YouTube first as the default selectable platform (for GMMTV / Studio [1/4] & full episodes)
+  const existingYt = platforms.find((p) => /youtube/i.test(p.name));
+  seen.add('youtube');
+  result.push({
+    name: 'YouTube',
+    url: existingYt
+      ? normalizePlatformUrl(existingYt.url, cleanedTitle)
+      : `/api/redirect?platform=YouTube&title=${encodeURIComponent(cleanedTitle)}&episode=1&kind=series`,
+    source: 'official',
+  });
+
+  // Include all other verified platforms where this series exists, excluding any TMDB/JustWatch links
+  for (const p of platforms) {
+    if (/tmdb|justwatch/i.test(p.name)) continue;
+    const isYt = /youtube/i.test(p.name);
+    if (isYt) continue;
+    const key = p.name.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      let finalUrl = normalizePlatformUrl(p.url, cleanedTitle);
+      if (/themoviedb\.org|justwatch\.com|\/categories\//i.test(finalUrl)) {
+        if (key.includes('viki')) finalUrl = `https://www.viki.com/search?q=${encodeURIComponent(cleanedTitle)}`;
+        else if (key.includes('iqiyi')) finalUrl = `https://www.iq.com/search?query=${encodeURIComponent(cleanedTitle)}`;
+        else if (key.includes('gagaoolala')) finalUrl = `https://www.gagaoolala.com/en/search?q=${encodeURIComponent(cleanedTitle)}`;
+        else if (key.includes('wetv')) finalUrl = `https://wetv.vip/en/search/${encodeURIComponent(cleanedTitle)}`;
+        else if (key.includes('netflix')) finalUrl = `https://www.netflix.com/search?q=${encodeURIComponent(cleanedTitle)}`;
+        else if (key.includes('crunchyroll')) finalUrl = `https://www.crunchyroll.com/search?q=${encodeURIComponent(cleanedTitle)}`;
+        else finalUrl = `/api/redirect?platform=${encodeURIComponent(p.name)}&title=${encodeURIComponent(cleanedTitle)}&episode=1&kind=series`;
+      }
+      result.push({
+        ...p,
+        name: p.name,
+        url: finalUrl,
+        source: 'official',
+      });
+    }
+  }
+
+  return result;
+}
+
+const MULTI_SEASON_SERIES: Array<{
+  matchTitles: RegExp;
+  seasons: SeriesSeason[];
+}> = [
+  {
+    matchTitles: /^(?:2gether(?:: The Series)?|Still 2gether)$/i,
+    seasons: [
+      { seasonNumber: 1, title: '2gether: The Series', episodes: 13, year: 2020 },
+      { seasonNumber: 2, title: 'Still 2gether', episodes: 5, year: 2020 },
+    ],
+  },
+  {
+    matchTitles: /^TharnType/i,
+    seasons: [
+      { seasonNumber: 1, title: 'TharnType: The Series', episodes: 12, year: 2019 },
+      { seasonNumber: 2, title: 'TharnType 2: 7 Years of Love', episodes: 12, year: 2020 },
+    ],
+  },
+  {
+    matchTitles: /^(?:I Told Sunset About You|I Promised You the Moon)$/i,
+    seasons: [
+      { seasonNumber: 1, title: 'I Told Sunset About You', episodes: 5, year: 2020 },
+      { seasonNumber: 2, title: 'I Promised You the Moon', episodes: 5, year: 2021 },
+    ],
+  },
+  {
+    matchTitles: /^To My Star/i,
+    seasons: [
+      { seasonNumber: 1, title: 'To My Star', episodes: 9, year: 2021 },
+      { seasonNumber: 2, title: 'To My Star 2: Our Untold Stories', episodes: 10, year: 2022 },
+    ],
+  },
+  {
+    matchTitles: /^We Best Love/i,
+    seasons: [
+      { seasonNumber: 1, title: 'We Best Love: No. 1 For You', episodes: 6, year: 2021 },
+      { seasonNumber: 2, title: 'We Best Love: Fighting Mr. 2nd', episodes: 6, year: 2021 },
+    ],
+  },
+  {
+    matchTitles: /^Heartstopper$/i,
+    seasons: [
+      { seasonNumber: 1, title: 'Heartstopper — Season 1', episodes: 8, year: 2022 },
+      { seasonNumber: 2, title: 'Heartstopper — Season 2', episodes: 8, year: 2023 },
+      { seasonNumber: 3, title: 'Heartstopper — Season 3', episodes: 8, year: 2024 },
+    ],
+  },
+  {
+    matchTitles: /^Young Royals$/i,
+    seasons: [
+      { seasonNumber: 1, title: 'Young Royals — Season 1', episodes: 6, year: 2021 },
+      { seasonNumber: 2, title: 'Young Royals — Season 2', episodes: 6, year: 2022 },
+      { seasonNumber: 3, title: 'Young Royals — Season 3', episodes: 6, year: 2024 },
+    ],
+  },
+  {
+    matchTitles: /^(?:My Beautiful Man|Utsukushii Kare)/i,
+    seasons: [
+      { seasonNumber: 1, title: 'My Beautiful Man — Season 1', episodes: 6, year: 2021 },
+      { seasonNumber: 2, title: 'My Beautiful Man — Season 2', episodes: 4, year: 2023 },
+    ],
+  },
+  {
+    matchTitles: /^(?:Minato's Laundromat|Minato Shouji Coin Laundry)/i,
+    seasons: [
+      { seasonNumber: 1, title: "Minato's Laundromat — Season 1", episodes: 12, year: 2022 },
+      { seasonNumber: 2, title: "Minato's Laundromat — Season 2", episodes: 12, year: 2023 },
+    ],
+  },
+  {
+    matchTitles: /^(?:What Did You Eat Yesterday\?|Kinou Nani Tabeta\?)/i,
+    seasons: [
+      { seasonNumber: 1, title: 'What Did You Eat Yesterday? — Season 1', episodes: 12, year: 2019 },
+      { seasonNumber: 2, title: 'What Did You Eat Yesterday? — Season 2', episodes: 12, year: 2023 },
+    ],
+  },
+  {
+    matchTitles: /^Ossan's Love(?:\s*\(JP\))?$/i,
+    seasons: [
+      { seasonNumber: 1, title: "Ossan's Love — Season 1", episodes: 7, year: 2018 },
+      { seasonNumber: 2, title: "Ossan's Love: In the Sky", episodes: 8, year: 2019 },
+      { seasonNumber: 3, title: "Ossan's Love Returns", episodes: 9, year: 2024 },
+    ],
+  },
+  {
+    matchTitles: /^(?:A Man Who Defies the World of BL|Zettai BL)/i,
+    seasons: [
+      { seasonNumber: 1, title: 'A Man Who Defies the World of BL — Season 1', episodes: 4, year: 2021 },
+      { seasonNumber: 2, title: 'A Man Who Defies the World of BL — Season 2', episodes: 3, year: 2022 },
+      { seasonNumber: 3, title: 'A Man Who Defies the World of BL 2024', episodes: 6, year: 2024 },
+    ],
+  },
+  {
+    matchTitles: /^(?:SOTUS(?:: The Series)?|SOTUS S(?:: The Series)?)$/i,
+    seasons: [
+      { seasonNumber: 1, title: 'SOTUS: The Series', episodes: 15, year: 2016 },
+      { seasonNumber: 2, title: 'SOTUS S: The Series', episodes: 13, year: 2017 },
+    ],
+  },
+  {
+    matchTitles: /^(?:Love by Chance|A Chance to Love)$/i,
+    seasons: [
+      { seasonNumber: 1, title: 'Love by Chance', episodes: 14, year: 2018 },
+      { seasonNumber: 2, title: 'A Chance to Love', episodes: 13, year: 2020 },
+    ],
+  },
+  {
+    matchTitles: /^(?:Dark Blue Kiss|Kiss Me Again)$/i,
+    seasons: [
+      { seasonNumber: 1, title: 'Kiss Me Again (Pete-Kao)', episodes: 14, year: 2018 },
+      { seasonNumber: 2, title: 'Dark Blue Kiss', episodes: 12, year: 2019 },
+    ],
+  },
+  {
+    matchTitles: /^Cutie Pie/i,
+    seasons: [
+      { seasonNumber: 1, title: 'Cutie Pie', episodes: 12, year: 2022 },
+      { seasonNumber: 2, title: 'Cutie Pie 2 You', episodes: 4, year: 2023 },
+    ],
+  },
+  {
+    matchTitles: /^Love Mechanics/i,
+    seasons: [
+      { seasonNumber: 1, title: 'En of Love: Love Mechanics', episodes: 4, year: 2020 },
+      { seasonNumber: 2, title: 'Love Mechanics (Full Series)', episodes: 10, year: 2022 },
+    ],
+  },
+  {
+    matchTitles: /^Color Rush/i,
+    seasons: [
+      { seasonNumber: 1, title: 'Color Rush — Season 1', episodes: 8, year: 2020 },
+      { seasonNumber: 2, title: 'Color Rush — Season 2', episodes: 8, year: 2022 },
+    ],
+  },
+  {
+    matchTitles: /^Gameboys/i,
+    seasons: [
+      { seasonNumber: 1, title: 'Gameboys — Season 1', episodes: 13, year: 2020 },
+      { seasonNumber: 2, title: 'Gameboys — Season 2', episodes: 8, year: 2022 },
+    ],
+  },
+  {
+    matchTitles: /^2Moons/i,
+    seasons: [
+      { seasonNumber: 1, title: '2Moons: The Series', episodes: 12, year: 2017 },
+      { seasonNumber: 2, title: '2Moons2', episodes: 12, year: 2019 },
+      { seasonNumber: 3, title: '2Moons: The Ambassador', episodes: 12, year: 2022 },
+    ],
+  },
+  {
+    matchTitles: /^Gen Y/i,
+    seasons: [
+      { seasonNumber: 1, title: 'Gen Y The Series — Season 1', episodes: 12, year: 2020 },
+      { seasonNumber: 2, title: 'Gen Y The Series — Season 2', episodes: 12, year: 2021 },
+    ],
+  },
+  {
+    matchTitles: /^Skam\s*\(Season 3|^Skam$/i,
+    seasons: [
+      { seasonNumber: 1, title: 'Skam — Season 1', episodes: 11, year: 2015 },
+      { seasonNumber: 2, title: 'Skam — Season 2', episodes: 12, year: 2016 },
+      { seasonNumber: 3, title: 'Skam — Season 3 (Isak & Even)', episodes: 10, year: 2016 },
+      { seasonNumber: 4, title: 'Skam — Season 4', episodes: 10, year: 2017 },
+    ],
+  },
+  {
+    matchTitles: /^Skam France/i,
+    seasons: [
+      { seasonNumber: 1, title: 'Skam France — Season 1', episodes: 9, year: 2018 },
+      { seasonNumber: 2, title: 'Skam France — Season 2', episodes: 13, year: 2018 },
+      { seasonNumber: 3, title: 'Skam France — Season 3 (Lucas & Eliott)', episodes: 10, year: 2019 },
+    ],
+  },
+  {
+    matchTitles: /^HIStory/i,
+    seasons: [
+      { seasonNumber: 1, title: 'HIStory1', episodes: 12, year: 2017 },
+      { seasonNumber: 2, title: 'HIStory2: Right or Wrong / Crossing the Line', episodes: 16, year: 2018 },
+      { seasonNumber: 3, title: 'HIStory3: Trapped / Make Our Days Count', episodes: 40, year: 2019 },
+      { seasonNumber: 4, title: 'HIStory4: Close to You', episodes: 20, year: 2021 },
+      { seasonNumber: 5, title: 'HIStory5: Love in the Future', episodes: 20, year: 2022 },
+    ],
+  },
+];
+
+function getSeasonsForTitle(title: string): SeriesSeason[] | undefined {
+  const matched = MULTI_SEASON_SERIES.find((entry) => entry.matchTitles.test(title.trim()));
+  return matched && matched.seasons.length >= 2 ? matched.seasons : undefined;
+}
+
+function buildEpisodeLinks(episodesCount: number, platforms: PlatformLink[], seriesTitle: string): SeriesEpisodeLink[] {
+  const primary = platforms[0];
+  if (!primary) return [];
+  const cleaned = cleanTitleForSearch(seriesTitle);
+  return Array.from({ length: episodesCount }, (_, idx) => {
+    const epNum = idx + 1;
+    const isYt = /youtube/i.test(primary.name);
+    return {
+      number: epNum,
+      title: `${seriesTitle} — Episode ${epNum}`,
+      url: isYt
+        ? `https://www.youtube.com/results?search_query=${encodeURIComponent(`${cleaned} Episode ${epNum} Eng Sub`)}`
+        : primary.url,
+      platform: primary.name,
+    };
+  });
+}
+
+function createBlSeries(entry: {
+  id: string;
+  title: string;
+  country: string;
+  status: 'airing' | 'upcoming' | 'completed';
+  sourceUrl: string;
+  coverUrl?: string;
+  synopsis: string;
+  year: number;
+  releaseDate: string;
+  episodes: number;
+  genres: string[];
+  platforms: PlatformLink[];
+}): Series {
+  const multiPlatforms = ensureMultiPlatforms(entry.platforms, entry.title);
+  const seasons = getSeasonsForTitle(entry.title);
+  return {
+    ...entry,
+    ...(seasons ? { seasons } : {}),
+    platforms: multiPlatforms,
+    episodeLinks: buildEpisodeLinks(entry.episodes, multiPlatforms, entry.title),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+const RAW_BL_SERIES: Array<Parameters<typeof createBlSeries>[0]> = [
+  // === CURRENTLY AIRING (2024 - 2025) ===
+  {
+    id: 'tmdb-278901',
+    title: 'Gelboys',
+    country: 'Thailand',
+    status: 'airing',
+    sourceUrl: 'https://www.themoviedb.org/tv/278901-gelboys',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/553/1384949.jpg',
+    synopsis: 'Around Bangkok’s Siam Square, four high school boys explore gel nail art, youth culture, and the shifting boundaries of first love.',
+    year: 2025,
+    releaseDate: '2025-02-08',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/album/gelboys-2025-1f3m7rgthfp?lang=en_us&sh_pltf=4', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-280112',
+    title: 'The Boy Next World',
+    country: 'Thailand',
+    status: 'airing',
+    sourceUrl: 'https://www.themoviedb.org/tv/280112-the-boy-next-world',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/547/1369795.jpg',
+    synopsis: 'College student Phukan has never known romance until popular senior Cirrus knocks on his door claiming to be his boyfriend from a parallel universe.',
+    year: 2025,
+    releaseDate: '2025-01-05',
+    episodes: 10,
+    genres: ['BL', 'Sci-Fi & Fantasy', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/album/the-boy-next-world-2025-115x2w9p81?lang=en_us', source: 'official' },
+      { name: 'Viki', url: 'https://www.viki.com/tv/40895c-the-boy-next-world', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-280455',
+    title: "Ossan's Love Thailand",
+    country: 'Thailand',
+    status: 'airing',
+    sourceUrl: 'https://www.themoviedb.org/tv/280455-ossans-love-thailand',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/548/1370006.jpg',
+    synopsis: 'Single real-estate agent Heng suddenly finds himself at the center of a chaotic love triangle when both his respected boss Kongdech and his new roommate Mo confess to him.',
+    year: 2025,
+    releaseDate: '2025-01-06',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40910c-ossans-love-thailand', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/5012/ossans-love-thailand-2025', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-282310',
+    title: 'Secret Relationships',
+    country: 'South Korea',
+    status: 'airing',
+    sourceUrl: 'https://www.themoviedb.org/tv/282310-secret-relationships',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/553/1384201.jpg',
+    synopsis: 'Resourceful office worker Da On becomes entangled between three men—his sharp-tongued coworker Seong Hyeon, his former tutor Jae Min, and wealthy heir Su Hyeon.',
+    year: 2025,
+    releaseDate: '2025-02-27',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/album/secret-relationships-2025-19rrhl9y55?lang=en_us', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/5120/secret-relationships-2025', source: 'official' },
+      { name: 'Watcha', url: 'https://watcha.com/contents/tR72Kgn', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-283190',
+    title: 'Heesu in Class 2',
+    country: 'South Korea',
+    status: 'airing',
+    sourceUrl: 'https://www.themoviedb.org/tv/283190-heesu-in-class-2',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/556/1391651.jpg',
+    synopsis: 'High schooler Heesu’s entire world revolves around his secret crush on best friend Chanyoung—until a rumor turns him into the school’s go-to relationship counselor.',
+    year: 2025,
+    releaseDate: '2025-03-28',
+    episodes: 10,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40988c-heesu-in-class-2', source: 'official' },
+      { name: 'Heavenly', url: 'https://heavenly.tv/detail/891', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-284015',
+    title: 'Sweet Tooth, Good Dentist',
+    country: 'Thailand',
+    status: 'airing',
+    sourceUrl: 'https://www.themoviedb.org/tv/284015-sweet-tooth-good-dentist',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/565/1413738.jpg',
+    synopsis: 'Dessert livestreamer Sant gets a cavity and has no choice but to visit blunt, handsome dentist Jay, sparking an unexpectedly sweet romance.',
+    year: 2025,
+    releaseDate: '2025-03-21',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/album/sweet-tooth-good-dentist-2025-19rrhl9z88?lang=en_us', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-276500',
+    title: 'Perfect 10 Liners',
+    country: 'Thailand',
+    status: 'airing',
+    sourceUrl: 'https://www.themoviedb.org/tv/276500-perfect-10-liners',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/539/1347795.jpg',
+    synopsis: 'Inside an elite university engineering faculty, three generations of mentors and freshmen—Arc & Arm, Yotha & Gun, and Faifa & Wine—find love.',
+    year: 2024,
+    releaseDate: '2024-10-27',
+    episodes: 24,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40845c-perfect-10-liners', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-272115',
+    title: 'ThamePo Heart That Skips a Beat',
+    country: 'Thailand',
+    status: 'airing',
+    sourceUrl: 'https://www.themoviedb.org/tv/272115-thamepo',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/545/1363032.jpg',
+    synopsis: 'Documentary filmmaker Po is assigned to record the final concert of boy band MARS, growing close to leader Thame as they fight to save the group.',
+    year: 2024,
+    releaseDate: '2024-12-13',
+    episodes: 13,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Netflix', url: 'https://www.netflix.com/title/81948011', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-277100',
+    title: 'Your Sky',
+    country: 'Thailand',
+    status: 'airing',
+    sourceUrl: 'https://www.themoviedb.org/tv/277100-your-sky',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/540/1350917.jpg',
+    synopsis: 'University student Teerak pretends to date popular senior Muenfah to ward off an insistent admirer, only for their fake relationship to turn real.',
+    year: 2024,
+    releaseDate: '2024-11-17',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/album/your-sky-2024-15k8n2p9w1', source: 'official' },
+      { name: 'Viki', url: 'https://www.viki.com/tv/40812c-your-sky', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-124800',
+    title: 'Heartstopper',
+    country: 'United Kingdom',
+    status: 'airing',
+    sourceUrl: 'https://www.themoviedb.org/tv/124800-heartstopper',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/632/1580747.jpg',
+    synopsis: 'British teens Charlie Spring and Nick Nelson discover their unlikely friendship at Truham Grammar School is blossoming into first love.',
+    year: 2022,
+    releaseDate: '2022-04-22',
+    episodes: 24,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Netflix', url: 'https://www.netflix.com/title/81059939', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-284110',
+    title: 'Top Form',
+    country: 'Thailand',
+    status: 'airing',
+    sourceUrl: 'https://www.themoviedb.org/tv/284110-top-form',
+    synopsis: 'Rising actor Jin and reigning superstar Akin are cast together in a high-stakes drama where off-camera tension turns into undeniable passion.',
+    year: 2025,
+    releaseDate: '2025-03-20',
+    episodes: 11,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'WeTV', url: 'https://wetv.vip/en/search/Top%20Form', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-284220',
+    title: 'My Golden Blood',
+    country: 'Thailand',
+    status: 'airing',
+    sourceUrl: 'https://www.themoviedb.org/tv/284220-my-golden-blood',
+    synopsis: 'Immortal vampire Mark is assigned to protect Tong, an orphan born with rare golden blood that every supernatural creature craves.',
+    year: 2025,
+    releaseDate: '2025-03-12',
+    episodes: 12,
+    genres: ['BL', 'Sci-Fi & Fantasy', 'Action & Adventure', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=My%20Golden%20Blood', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-284330',
+    title: 'Fight for You',
+    country: 'Taiwan',
+    status: 'airing',
+    sourceUrl: 'https://www.themoviedb.org/tv/284330-fight-for-you',
+    synopsis: 'Two young men from rival worlds cross paths in Taipei, discovering loyalty and love amidst underground struggles.',
+    year: 2025,
+    releaseDate: '2025-02-14',
+    episodes: 10,
+    genres: ['BL', 'Action & Adventure', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/search?q=Fight+for+You', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-284440',
+    title: 'Exclusive Love',
+    country: 'Taiwan',
+    status: 'airing',
+    sourceUrl: 'https://www.themoviedb.org/tv/284440-exclusive-love',
+    synopsis: 'Fearful heir Wang Zhan is forced to train at a family funeral home under perfectionist instructor Tang Du Zhi, while wedding planners張弛 and季元وص navigate their own feelings.',
+    year: 2025,
+    releaseDate: '2025-02-14',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40942c-exclusive-love', source: 'official' },
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=Exclusive%20Love', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-284550',
+    title: 'The Stain (Miseinen: Mijuku na Bokura wa Bukiyo ni Shinkochu)',
+    country: 'Japan',
+    status: 'airing',
+    sourceUrl: 'https://www.themoviedb.org/tv/284550-our-youth',
+    synopsis: 'Honor student Jin Minase, indifferent to everyone around him, discovers bruised delinquent classmate Haruki Hirukawa’s painful home secret.',
+    year: 2024,
+    releaseDate: '2024-11-04',
+    episodes: 11,
+    genres: ['BL', 'Drama', 'Romance', 'Coming of Age'],
+    platforms: [
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/4910/our-youth-2024', source: 'official' },
+      { name: 'Viki', url: 'https://www.viki.com/tv/40861c-our-youth', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-284660',
+    title: 'When It Rains, It Pours (Futtara Doshaburi)',
+    country: 'Japan',
+    status: 'airing',
+    sourceUrl: 'https://www.themoviedb.org/tv/284660-when-it-rains-it-pours',
+    synopsis: 'Two co-workers trapped in lonely, loveless domestic lives connect through a mistakenly delivered letter in their company mailroom.',
+    year: 2025,
+    releaseDate: '2025-01-09',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/5022/when-it-rains-it-pours-2025', source: 'official' },
+      { name: 'Viki', url: 'https://www.viki.com/tv/40920c-when-it-rains-it-pours', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-284770',
+    title: 'Heart Stain',
+    country: 'South Korea',
+    status: 'airing',
+    sourceUrl: 'https://www.themoviedb.org/tv/284770-heart-stain',
+    synopsis: 'High schooler Woo Hyun secretly loves his homeroom teacher, while his best friend Do Ha secretly falls in love with Woo Hyun.',
+    year: 2025,
+    releaseDate: '2025-02-06',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=Heart%20Stain', source: 'official' },
+      { name: 'Viki', url: 'https://www.viki.com/tv/40933c-heart-stain', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-284880',
+    title: 'FC Soldout',
+    country: 'South Korea',
+    status: 'airing',
+    sourceUrl: 'https://www.themoviedb.org/tv/284880-fc-soldout',
+    synopsis: 'A struggling football team is bought by an entertainment agency, forcing a prickly star actor and a dedicated soccer player to share the pitch.',
+    year: 2025,
+    releaseDate: '2025-01-17',
+    episodes: 8,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=FC%20Soldout', source: 'official' },
+      { name: 'Viki', url: 'https://www.viki.com/tv/40915c-fc-soldout', source: 'official' },
+    ],
+  },
+
+  // === UPCOMING (2025 - 2026) ===
+  {
+    id: 'tmdb-281400',
+    title: 'Revamp: The Undead Story',
+    country: 'Thailand',
+    status: 'upcoming',
+    sourceUrl: 'https://www.themoviedb.org/tv/281400-revamp',
+    synopsis: 'Vintage shop owner Punn is hired to restore an ancient portrait and awakens Ramil, heir to a dynasty of vampires.',
+    year: 2025,
+    releaseDate: '2025-08-01',
+    episodes: 12,
+    genres: ['BL', 'Sci-Fi & Fantasy', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/album/revamp-the-undead-story-2025-19rrhl9x11', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-281502',
+    title: 'The Next Prince',
+    country: 'Thailand',
+    status: 'upcoming',
+    sourceUrl: 'https://www.themoviedb.org/tv/281502-the-next-prince',
+    synopsis: 'Royal guard Charan escorts Prince Khanin back to the kingdom of Emmaly to compete in the royal fencing tournament for the crown.',
+    year: 2025,
+    releaseDate: '2025-05-03',
+    episodes: 14,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/album/the-next-prince-2025-19rrhl9z22', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-285100',
+    title: 'Ticket to Heaven',
+    country: 'Thailand',
+    status: 'upcoming',
+    sourceUrl: 'https://www.themoviedb.org/tv/285100-ticket-to-heaven',
+    synopsis: 'In a Catholic seminary in 1990s Thailand, model pious youth Tanrak’s faith is shaken when rebellious transfer student Barth enters his life.',
+    year: 2026,
+    releaseDate: '2026-01-15',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance', 'Coming of Age'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/categories/country/thailand/genre/bl', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-285200',
+    title: 'Burnout Syndrome',
+    country: 'Thailand',
+    status: 'upcoming',
+    sourceUrl: 'https://www.themoviedb.org/tv/285200-burnout-syndrome',
+    synopsis: 'An exhausted creative director and a mysterious nocturnal bartender form an intense connection across late-night Bangkok.',
+    year: 2025,
+    releaseDate: '2025-09-12',
+    episodes: 10,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/album/burnout-syndrome-2025-19rrhl9z99', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-285300',
+    title: 'Me and Thee',
+    country: 'Thailand',
+    status: 'upcoming',
+    sourceUrl: 'https://www.themoviedb.org/tv/285300-me-and-thee',
+    synopsis: 'Drama-loving mafia boss Thee recruits grounded photographer Peach to coach him on how to court a crush, only to fall for his coach instead.',
+    year: 2025,
+    releaseDate: '2025-10-10',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Action & Adventure', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/categories/country/thailand/genre/bl', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-285400',
+    title: 'Only Friends: Dream On',
+    country: 'Thailand',
+    status: 'upcoming',
+    sourceUrl: 'https://www.themoviedb.org/tv/285400-only-friends-dream-on',
+    synopsis: 'A new circle of theatre and music majors collide in a bold new chapter of passion, ambition, and messy relationships.',
+    year: 2025,
+    releaseDate: '2025-11-01',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40328c-only-friends', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-285500',
+    title: 'Dare You to Death',
+    country: 'Thailand',
+    status: 'upcoming',
+    sourceUrl: 'https://www.themoviedb.org/tv/285500-dare-you-to-death',
+    synopsis: 'Two rival police inspectors are forced to partner up when a deadly game of Truth or Dare claims victims across a university campus.',
+    year: 2025,
+    releaseDate: '2025-10-20',
+    episodes: 12,
+    genres: ['BL', 'Mystery', 'Crime', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=Dare%20You%20to%20Death', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-285600',
+    title: 'Memoir of Rati',
+    country: 'Thailand',
+    status: 'upcoming',
+    sourceUrl: 'https://www.themoviedb.org/tv/285600-memoir-of-rati',
+    synopsis: 'Set in 1915 Siam, young interpreter Rati returns from France and forms a forbidden bond with nobleman Thee amidst royal court intrigue.',
+    year: 2025,
+    releaseDate: '2025-07-18',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/categories/country/thailand/genre/bl', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-285700',
+    title: 'The Ex-Morning',
+    country: 'Thailand',
+    status: 'upcoming',
+    sourceUrl: 'https://www.themoviedb.org/tv/285700-the-ex-morning',
+    synopsis: 'Disgraced television news anchor Pathaphi is forced to work under his newly hired producer—who happens to be his ex-boyfriend Tam.',
+    year: 2025,
+    releaseDate: '2025-06-15',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/categories/country/thailand/genre/bl', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-285800',
+    title: 'shine (The Series)',
+    country: 'Thailand',
+    status: 'upcoming',
+    sourceUrl: 'https://www.themoviedb.org/tv/285800-shine',
+    synopsis: 'Set against the counterculture and political awakening of late-1960s Thailand, two young men discover love and revolution.',
+    year: 2025,
+    releaseDate: '2025-08-22',
+    episodes: 10,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'WeTV', url: 'https://wetv.vip/en/search/shine', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-285900',
+    title: 'Khemjira',
+    country: 'Thailand',
+    status: 'upcoming',
+    sourceUrl: 'https://www.themoviedb.org/tv/285900-khemjira',
+    synopsis: 'Born under a family curse that dooms male descendants to die before age twenty, Khem seeks protection from powerful northern shaman Pharan.',
+    year: 2025,
+    releaseDate: '2025-07-05',
+    episodes: 12,
+    genres: ['BL', 'Sci-Fi & Fantasy', 'Mystery', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=Khemjira', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-286000',
+    title: 'Love Upon a Time',
+    country: 'Thailand',
+    status: 'upcoming',
+    sourceUrl: 'https://www.themoviedb.org/tv/286000-love-upon-a-time',
+    synopsis: 'Modern college student Nakhun is pulled nearly four hundred years back into the Ayutthaya Kingdom and must impersonate a missing nobleman.',
+    year: 2025,
+    releaseDate: '2025-09-01',
+    episodes: 12,
+    genres: ['BL', 'Sci-Fi & Fantasy', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=Love%20Upon%20a%20Time', source: 'official' },
+    ],
+  },
+
+  // === COMPLETED & ICONIC BL LIVE-ACTION SERIES ===
+  {
+    id: 'tmdb-275410',
+    title: 'Fourever You',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/275410-fourever-you',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/535/1338826.jpg',
+    synopsis: 'Easter moves to a northern Thai university hoping to forget his past, only to reconnect with his first love Hill alongside medical seniors Johan and North.',
+    year: 2024,
+    releaseDate: '2024-10-03',
+    episodes: 17,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'WeTV', url: 'https://wetv.vip/en/play/1ci6pha8sn1tf5h-Fourever%20You%20(Uncut%20Ver.)/t4100l7xft2-EP1%3A%20Fourever%20You%20(Uncut%20Ver.)', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-275890',
+    title: 'See Your Love',
+    country: 'Taiwan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/275890-see-your-love',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/537/1344131.jpg',
+    synopsis: 'Deaf caretaker Jiang Shaopeng is hired to look after reluctant corporate heir Yang Zixiang after an assassination attempt brings them together.',
+    year: 2024,
+    releaseDate: '2024-10-23',
+    episodes: 13,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'WeTV', url: 'https://wetv.vip/en/album/rigkbvj5a6vdcj1', source: 'official' },
+      { name: 'Viki', url: 'https://www.viki.com/tv/40788c-see-your-love', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/4875/see-your-love-2024', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-136248',
+    title: 'KinnPorsche The Series',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/136248-kinnporsche-the-series',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/402/1006163.jpg',
+    synopsis: 'Porsche, an underground street fighter and bartender protecting his younger brother, is recruited as head bodyguard for Kinn, second heir to a powerful Bangkok crime family.',
+    year: 2022,
+    releaseDate: '2022-04-02',
+    episodes: 14,
+    genres: ['BL', 'Action & Adventure', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/play/kinnporsche-the-series-la-forte-1cyt9yg6igc?lang=en_us&sh_pltf=4', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-156404',
+    title: 'Semantic Error',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/156404',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/390/976737.jpg',
+    synopsis: 'Rule-bound computer science student Chu Sangwoo publicly removes freeloading classmates from a group presentation, inadvertently derailing campus design star Jang Jaeyoung’s graduation plans.',
+    year: 2022,
+    releaseDate: '2022-02-16',
+    episodes: 8,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/38375c-semantic-error', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/2547/semantic-error-2022', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-114866',
+    title: 'Bad Buddy',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/114866-bad-buddy',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/612/1531857.jpg',
+    synopsis: 'Next-door neighbors Pat and Pran were raised by families locked in a bitter business feud, forcing them to hide their growing bond behind a facade of rivalry.',
+    year: 2021,
+    releaseDate: '2021-10-29',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/38219c-bad-buddy', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-110386',
+    title: 'Cherry Magic! Thirty Years of Virginity Can Make You a Wizard?!',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/110386-30',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/491/1227665.jpg',
+    synopsis: 'Shy stationery company clerk Kiyoshi Adachi turns thirty as a virgin and awakens the power to hear people’s thoughts through touch—discovering that top salesman Yuichi Kurosawa is secretly in love with him.',
+    year: 2020,
+    releaseDate: '2020-10-09',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Romance', 'Fantasy'],
+    platforms: [
+      { name: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/G0XHWM5Q0/cherry-magic-thirty-years-of-virginity-can-make-you-a-wizard', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-138456',
+    title: 'My Beautiful Man (Utsukushii Kare)',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/138456',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/376/941038.jpg',
+    synopsis: 'Lonely high school senior Hira, who struggles with a stutter and photographs the world from the margins, becomes utterly devoted to his cold, charismatic classmate Sou Kiyoi.',
+    year: 2021,
+    releaseDate: '2021-11-18',
+    episodes: 10,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/38406c-my-beautiful-man', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/2455/my-beautiful-man-2021', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-221851',
+    title: 'The Eighth Sense',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/221851',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/456/1141344.jpg',
+    synopsis: 'Small-town freshman Ji Hyun joins a Seoul university surfing club and is drawn to returning senior Jae Won as both confront emotional trauma and first love.',
+    year: 2023,
+    releaseDate: '2023-03-29',
+    episodes: 10,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39344c-the-eighth-sense', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/3284/the-eighth-sense-2023', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-111457',
+    title: 'I Told Sunset About You',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/111457',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/309/774047.jpg',
+    synopsis: 'Estranged childhood friends Teh and Oh-aew reunite at a Chinese-language cram school in Phuket, where college entrance ambitions and repressed desires collide.',
+    year: 2020,
+    releaseDate: '2020-10-22',
+    episodes: 5,
+    genres: ['BL', 'Drama', 'Romance', 'Coming of Age'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/37483c-i-told-sunset-about-you', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-126114',
+    title: 'I Promised You the Moon',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/126114-i-promised-you-the-moon',
+    synopsis: 'Teh and Oh-aew move from Phuket to Bangkok for university, where new friendships, theatre clubs, and adult temptations test their promise to each other.',
+    year: 2021,
+    releaseDate: '2021-05-27',
+    episodes: 5,
+    genres: ['BL', 'Drama', 'Romance', 'Coming of Age'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/37876c-i-promised-you-the-moon', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-245912',
+    title: 'Unknown (The Series)',
+    country: 'Taiwan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/245912',
+    synopsis: 'Wei Qian works tirelessly to raise his younger sister and adopted brother Wei Zhiyuan, until Zhiyuan returns from abroad determined to be seen as a partner rather than a brother.',
+    year: 2024,
+    releaseDate: '2024-02-24',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40446c-unknown', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-258914',
+    title: 'The On1y One',
+    country: 'Taiwan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/258914',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/531/1327879.jpg',
+    synopsis: 'Stepbrothers Sheng Wang and Jiang Tian are forced to live under the same roof and sit in the same high school classroom, where initial friction turns into an unforgettable youth romance.',
+    year: 2024,
+    releaseDate: '2024-08-22',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40533c-the-on1y-one', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/4580/the-on1y-one-2024', source: 'official' },
+      { name: 'iQIYI', url: 'https://www.iq.com/album/the-on1y-one-2024-2ge4shuunbp?lang=en_us', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-239770',
+    title: 'Last Twilight',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/239770-last-twilight',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/484/1211106.jpg',
+    synopsis: 'Technical college graduate Mhok takes a job as caretaker for Day, a national para-badminton player gradually losing his sight.',
+    year: 2023,
+    releaseDate: '2023-11-10',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40363c-last-twilight', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-215333',
+    title: 'Moonlight Chicken',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/215333-moonlight-chicken',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/442/1106880.jpg',
+    synopsis: 'Jim runs a late-night Hainanese chicken rice diner in Pattaya. A chance encounter with customer Wen changes both of their lives.',
+    year: 2023,
+    releaseDate: '2023-02-08',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39521c-moonlight-chicken', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-206511',
+    title: 'Love in the Air',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/206511-love-in-the-air',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/418/1047059.jpg',
+    synopsis: 'Architecture students Rain and Sky cross paths with street-racing legends Phayu and Prapai on a stormy night in Bangkok.',
+    year: 2022,
+    releaseDate: '2022-08-18',
+    episodes: 13,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39109c-love-in-the-air', source: 'official' },
+      { name: 'iQIYI', url: 'https://www.iq.com/play/love-in-the-air-18jkl3qk4ek?lang=en_us&sh_pltf=4', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-214209',
+    title: 'My School President',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/214209-my-school-president',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/431/1078963.jpg',
+    synopsis: 'High school band leader Gun must win the Hot Wave music contest to save Chinzhilla from disbandment, with help from student council president Tinn.',
+    year: 2022,
+    releaseDate: '2022-12-02',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39321c-my-school-president', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-231802',
+    title: 'My Personal Weatherman (Taikan Yoho)',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/231802',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/471/1177964.jpg',
+    synopsis: 'Rising television weathercaster Mizuki Segasaki enters a domestic contract with struggling manga artist Yoh Tanada that triggers every sunny day.',
+    year: 2023,
+    releaseDate: '2023-08-11',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40072c-my-personal-weatherman', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/3598/my-personal-weatherman-2023', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-203122',
+    title: 'Old Fashion Cupcake',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/203122-old-fashion-cupcake',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/409/1024779.jpg',
+    synopsis: 'Approaching forty and stuck in an office routine, Nozue visits dessert cafes across Tokyo with his devoted twenty-nine-year-old subordinate Togawa.',
+    year: 2022,
+    releaseDate: '2022-06-13',
+    episodes: 5,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/38811c-old-fashion-cupcake', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-116002',
+    title: 'We Best Love: No. 1 For You',
+    country: 'Taiwan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/116002-we-best-love',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/296/742284.jpg',
+    synopsis: 'Zhou Shu Yi has been stuck in second place behind academic rival Gao Shi De since grade school, unaware that Shi De stayed at the top only to stay in Shu Yi’s sight.',
+    year: 2021,
+    releaseDate: '2021-01-08',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'WeTV', url: 'https://wetv.vip/play?cid=8xzttovneq58i2i&languageid=1491988', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-120055',
+    title: 'We Best Love: Fighting Mr. 2nd',
+    country: 'Taiwan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/120055-we-best-love-fighting-mr-2nd',
+    synopsis: 'Five years after Gao Shi De left for the United States, he returns to Taipei to face a heartbroken and furious Zhou Shu Yi in the corporate world.',
+    year: 2021,
+    releaseDate: '2021-03-05',
+    episodes: 6,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'WeTV', url: 'https://wetv.vip/play?cid=8xzttovneq58i2i&languageid=1491988', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-233201',
+    title: 'Kiseki: Dear to Me',
+    country: 'Taiwan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/233201-kiseki-dear-to-me',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/477/1193475.jpg',
+    synopsis: 'Medical student Bai Zong Yi shelters injured gang member Fan Ze Rui in his apartment, tangling their fates alongside mafia lieutenants Chen Yi and Ai Di.',
+    year: 2023,
+    releaseDate: '2023-08-22',
+    episodes: 13,
+    genres: ['BL', 'Action & Adventure', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39947c-kiseki-dear-to-me', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/3622/kiseki-dear-to-me-2023', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-90723',
+    title: 'The Untamed (Chen Qing Ling)',
+    country: 'China',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/90723-the-untamed',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/236/592104.jpg',
+    synopsis: 'Soulmates Wei Wuxian and Lan Wangji unravel a dark conspiracy across cultivation clans sixteen years after a tragic siege.',
+    year: 2019,
+    releaseDate: '2019-06-27',
+    episodes: 50,
+    genres: ['BL', 'Action & Adventure', 'Sci-Fi & Fantasy', 'Drama'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/36657c-the-untamed', source: 'official' },
+      { name: 'WeTV', url: 'https://wetv.vip/en/play/gnwjazjgmg997xg-The-Untamed', source: 'official' },
+      { name: 'Netflix', url: 'https://www.netflix.com/title/81200228', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-119388',
+    title: 'Word of Honor (Shan He Ling)',
+    country: 'China',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/119388-word-of-honor',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/298/745349.jpg',
+    synopsis: 'Former assassin leader Zhou Zishu and Ghost Valley master Wen Kexing roam the martial arts world together as ancient secrets surface.',
+    year: 2021,
+    releaseDate: '2021-02-22',
+    episodes: 36,
+    genres: ['BL', 'Action & Adventure', 'Sci-Fi & Fantasy', 'Drama'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/37669c-word-of-honor', source: 'official' },
+      { name: 'Netflix', url: 'https://www.netflix.com/title/81420604', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-117488',
+    title: 'To My Star',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/117488-to-my-star',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/410/1027141.jpg',
+    synopsis: 'Top actor Kang Seo Joon moves into the quiet home of reserved chef Han Ji Woo after a scandal.',
+    year: 2021,
+    releaseDate: '2021-01-22',
+    episodes: 19,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/38594c-to-my-star', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-220144',
+    title: 'Our Dating Sim',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/220144-our-dating-sim',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/450/1125775.jpg',
+    synopsis: 'Seven years after abruptly confessing in high school and vanishing, Lee Wan walks into a job interview as an illustrator at a gaming startup—only to find his crush Shin Ki Tae is the lead programmer.',
+    year: 2023,
+    releaseDate: '2023-03-09',
+    episodes: 8,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39508c-our-dating-sim', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-271904',
+    title: 'Let Free the Curse of Taekwondo',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/271904-let-free-the-curse-of-taekwondo',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/533/1333568.jpg',
+    synopsis: 'High schooler Do Hoe, trapped in his father’s strict rural taekwondo gym, forms a deep bond with cheerful Seoul transfer student Ju Young before a painful twelve-year separation.',
+    year: 2024,
+    releaseDate: '2024-10-17',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40587c-let-free-the-curse-of-taekwondo', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/4862/let-free-the-curse-of-taekwondo-2024', source: 'official' },
+      { name: 'Heavenly', url: 'https://heavenly.tv/en/detail/798', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-272190',
+    title: 'Love in the Big City',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/272190-love-in-the-big-city',
+    synopsis: 'Young writer Go Young navigates a decade of queer love, heartbreaks, and self-discovery in Seoul.',
+    year: 2024,
+    releaseDate: '2024-10-21',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40612c-love-in-the-big-city', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-125910',
+    title: 'Young Royals',
+    country: 'Sweden',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/125910-young-royals',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/523/1307898.jpg',
+    synopsis: 'Prince Wilhelm of Sweden enrolls at prestigious boarding school Hillerska and falls for choir scholarship student Simon Eriksson.',
+    year: 2021,
+    releaseDate: '2021-07-01',
+    episodes: 18,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Netflix', url: 'https://www.netflix.com/title/81210762', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-254810',
+    title: 'My Stand-In',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/254810-my-stand-in',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/509/1273044.jpg',
+    synopsis: 'Stunt double Joe gets pulled into a complicated relationship with young heir Ming before an accident gives him a second life in a new body.',
+    year: 2024,
+    releaseDate: '2024-04-26',
+    episodes: 12,
+    genres: ['BL', 'Action & Adventure', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/album/my-stand-in-2023-2bo696v0yep?lang=en_us&sh_pltf=4', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-261420',
+    title: 'Jack & Joker: U Steal My Heart!',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/261420-jack-joker',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/529/1323840.jpg',
+    synopsis: 'Master thief Joker and former taekwondo champion turned debt collector Jack team up against corrupt lenders in Bangkok.',
+    year: 2024,
+    releaseDate: '2024-09-09',
+    episodes: 12,
+    genres: ['BL', 'Action & Adventure', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/album/jack-joker-u-steal-my-heart-2024-12194025809', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-251200',
+    title: 'Century of Love',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/251200-century-of-love',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/522/1307305.jpg',
+    synopsis: 'Devoted San waits a hundred years in immortality for the reincarnation of his beloved Wat, only to clash with carefree modern youth Vee.',
+    year: 2024,
+    releaseDate: '2024-07-10',
+    episodes: 10,
+    genres: ['BL', 'Sci-Fi & Fantasy', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Netflix', url: 'https://www.netflix.com/title/81906744', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/4512/century-of-love-2024', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-250890',
+    title: 'Wandee Goodday',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/250890-wandee-goodday',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/514/1286522.jpg',
+    synopsis: 'Heartbroken orthopedist Dr. Wandee enters a four-month fake dating arrangement with rising boxer Yoryak Phadetsuek.',
+    year: 2024,
+    releaseDate: '2024-05-04',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40560c-wandee-goodday', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-250410',
+    title: 'We Are',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/250410-we-are',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/509/1273755.jpg',
+    synopsis: 'A tight-knit circle of university art and engineering friends navigate chaotic college life and unexpected love stories.',
+    year: 2024,
+    releaseDate: '2024-04-03',
+    episodes: 16,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/album/we-are-2024-119x8w5m20?lang=en_us', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-249120',
+    title: "Love for Love's Sake",
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/249120-love-for-loves-sake',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/499/1249042.jpg',
+    synopsis: 'Twenty-nine-year-old Tae Myung Ha is transported into the body of a nineteen-year-old character inside a novel with a mission to make lonely track athlete Cha Yeo Woon happy.',
+    year: 2024,
+    releaseDate: '2024-01-24',
+    episodes: 8,
+    genres: ['BL', 'Sci-Fi & Fantasy', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/album/love-for-loves-sake-2024-14x8n9p2q1?lang=en_us', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/3975/love-for-loves-sake-2024-e01', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-253800',
+    title: 'Boys Be Brave!',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/253800-boys-be-brave',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/571/1427956.jpg',
+    synopsis: 'Easygoing Jung Ki Sub crashes at the apartment of his secretly smitten college friend Kim Jin Woo and refuses to move out.',
+    year: 2024,
+    releaseDate: '2024-04-25',
+    episodes: 8,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40485c-boys-be-brave', source: 'official' },
+      { name: 'Heavenly', url: 'https://heavenly.tv/detail/698', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-250115',
+    title: 'Jazz for Two',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/250115-jazz-for-two',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/508/1270165.jpg',
+    synopsis: 'Classical pianist Yoon Se Heon hides in an arts high school music room to play jazz, catching the ear of grief-stricken senior Han Tae Yi.',
+    year: 2024,
+    releaseDate: '2024-03-27',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/album/jazz-for-two-2024-22tnv97fd9h?lang=ko&sh_pltf=4', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/4155/jazz-for-two-2024', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-238990',
+    title: 'Pit Babe The Series',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/238990-pit-babe',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/560/1401758.jpg',
+    synopsis: 'Champion race car driver Babe lets rookie enthusiast Charlie into his garage and his heart as a conspiracy unfolds on the track.',
+    year: 2023,
+    releaseDate: '2023-11-17',
+    episodes: 13,
+    genres: ['BL', 'Action & Adventure', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/album/pit-babe-the-series-2023-1imv6s8nfe9?lang=en_us&sh_pltf=4', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-232100',
+    title: 'Only Friends',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/232100-only-friends',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/471/1177522.jpg',
+    synopsis: 'Business school friends Mew, Ray, Boston, and Nick test the limits of friendship, desire, and trust while renovating a hostel together.',
+    year: 2023,
+    releaseDate: '2023-08-12',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40328c-only-friends', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-226900',
+    title: 'Be My Favorite',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/226900-be-my-favorite',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/460/1152365.jpg',
+    synopsis: 'A magical crystal music box sends introverted Botkawee ten years back to university, where his attempts to win over his female crush keep bringing him closer to Pisaeng.',
+    year: 2023,
+    releaseDate: '2023-05-26',
+    episodes: 12,
+    genres: ['BL', 'Sci-Fi & Fantasy', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39990c-be-my-favorite', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-155100',
+    title: 'Cutie Pie',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/155100-cutie-pie',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/394/985104.jpg',
+    synopsis: 'Promised in marriage since childhood to family friend Lian Kilen Wang, college drummer Kuea hides his rebel persona behind a polite facade.',
+    year: 2022,
+    releaseDate: '2022-02-19',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/38484c-cutie-pie', source: 'official' },
+      { name: 'YouTube', url: 'https://www.youtube.com/playlist?list=PLcTibKbv20S6Qnc5vSFKAQDR0v85mUd0k', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-139912',
+    title: 'Not Me',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/139912-not-me',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/379/948172.jpg',
+    synopsis: 'When his twin brother Black is brutally beaten into a coma, diplomatic graduate White infiltrates Black’s vigilante motorcycle gang in disguise—and clashes with suspicious gang member Sean.',
+    year: 2021,
+    releaseDate: '2021-12-12',
+    episodes: 14,
+    genres: ['BL', 'Action & Adventure', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39499c-not-me', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-117230',
+    title: 'A Tale of Thousand Stars (1000 Stars)',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/117230-a-tale-of-thousand-stars',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/563/1409543.jpg',
+    synopsis: 'After receiving a heart transplant from a volunteer schoolteacher, wealthy Tian travels to a mountain village in Chiang Rai to fulfill her final wish and meets Chief Forest Officer Phupha.',
+    year: 2021,
+    releaseDate: '2021-01-29',
+    episodes: 10,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/38218c-a-tale-of-thousand-stars', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-157890',
+    title: 'Cherry Blossoms After Winter',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/157890-cherry-blossoms-after-winter',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/389/973374.jpg',
+    synopsis: 'After losing his parents, Hae Bom grows up under the same roof as childhood friend Tae Sung; in their senior year of high school, living as brothers shifts into first love.',
+    year: 2022,
+    releaseDate: '2022-02-24',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/38394c-cherry-blossoms-after-winter', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-128410',
+    title: 'Light On Me',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/128410-light-on-me',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/329/823025.jpg',
+    synopsis: 'Loner high school student Woo Tae Kyung joins the Saebit Boys High student council to make friends, catching the attention of both warm president Da On and blunt vice-president Shin Woo.',
+    year: 2021,
+    releaseDate: '2021-06-29',
+    episodes: 16,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/37921c-light-on-me', source: 'official' },
+      { name: 'Watcha', url: 'https://watcha.com/contents/share/tEZAY0d', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-255600',
+    title: 'The Time of Fever',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/255600-the-time-of-fever',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/533/1333577.jpg',
+    synopsis: 'Childhood friends Ho Tae and Dong Hee reunite in Gangneung during high school and discover overwhelming feelings they can no longer hide.',
+    year: 2024,
+    releaseDate: '2024-05-17',
+    episodes: 6,
+    genres: ['BL', 'Drama', 'Romance', 'Coming of Age'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=The%20Time%20of%20Fever', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-239110',
+    title: 'The Sign',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/239110-the-sign',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/481/1204842.jpg',
+    synopsis: 'Special investigators Tharn and Phaya share prophetic dreams and reincarnated bonds tracing back to the mythical Garuda and Naga.',
+    year: 2023,
+    releaseDate: '2023-11-25',
+    episodes: 12,
+    genres: ['BL', 'Action & Adventure', 'Sci-Fi & Fantasy', 'Romance'],
+    platforms: [
+      { name: 'YouTube', url: 'https://www.youtube.com/results?search_query=The+Sign+Series+Idol+Factory+EP+1', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-241220',
+    title: 'Cherry Magic Thailand',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/241220-cherry-magic-thailand',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/489/1222972.jpg',
+    synopsis: 'Turning thirty as a virgin grants office worker Achi the ability to read minds on contact—revealing that model colleague Karan is head over heels for him.',
+    year: 2023,
+    releaseDate: '2023-12-09',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Romance', 'Fantasy'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/search?q=Cherry+Magic+Thailand', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-212400',
+    title: 'Between Us',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/212400-between-us',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/429/1074047.jpg',
+    synopsis: 'University swimming club vice-president Win helps freshman Team overcome sleep nightmares caused by childhood trauma.',
+    year: 2022,
+    releaseDate: '2022-11-06',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=Between%20Us', source: 'official' },
+      { name: 'Viki', url: 'https://www.viki.com/tv/39955c-between-us', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-95120',
+    title: 'Until We Meet Again',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/95120-until-we-meet-again',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/213/533933.jpg',
+    synopsis: 'College freshman Pharm and swimming club president Dean are drawn together by a red thread of fate linking them to past-life lovers Korn and In.',
+    year: 2019,
+    releaseDate: '2019-11-09',
+    episodes: 17,
+    genres: ['BL', 'Drama', 'Romance', 'Sci-Fi & Fantasy'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/36988c-until-we-meet-again', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-256100',
+    title: '4MINUTES',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/256100-4minutes',
+    synopsis: 'University student Great gains the supernatural ability to see four minutes into the future, altering fate and meeting surgical resident Tyme.',
+    year: 2024,
+    releaseDate: '2024-07-26',
+    episodes: 8,
+    genres: ['BL', 'Mystery', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40651c-4minutes', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-99450',
+    title: '2gether: The Series',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/99450-2gether',
+    synopsis: 'College freshman Tine enlists campus heartthrob and guitarist Sarawat to act as his fake boyfriend, only for the pretend romance to become real.',
+    year: 2020,
+    releaseDate: '2020-02-21',
+    episodes: 13,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'YouTube', url: 'https://www.youtube.com/results?search_query=2gether+The+Series+GMMTV+EP+1', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-107550',
+    title: 'Still 2gether',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/107550-still-2gether',
+    synopsis: 'Now in their second year together at university, Sarawat and Tine take on leadership roles in the music and cheerleading clubs.',
+    year: 2020,
+    releaseDate: '2020-08-14',
+    episodes: 5,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'YouTube', url: 'https://www.youtube.com/results?search_query=Still+2gether+GMMTV+EP+1', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-89110',
+    title: 'Theory of Love',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/89110-theory-of-love',
+    synopsis: 'Film major Third has been secretly in love with his playboy best friend Khai for three years without ever daring to confess.',
+    year: 2019,
+    releaseDate: '2019-06-01',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/38217c-theory-of-love', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-88120',
+    title: 'Dark Blue Kiss',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/88120-dark-blue-kiss',
+    synopsis: 'Pete and Kao navigate keeping their relationship secret from Kao’s mother while café owner Sun falls for fiery Mork.',
+    year: 2019,
+    releaseDate: '2019-10-12',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/38216c-dark-blue-kiss', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-67890',
+    title: 'SOTUS: The Series',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/67890-sotus',
+    synopsis: 'Head hazer Arthit clashes with fearless engineering freshman Kongpob, who boldly declares he will win Arthit’s heart.',
+    year: 2016,
+    releaseDate: '2016-08-20',
+    episodes: 15,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'YouTube', url: 'https://www.youtube.com/results?search_query=SOTUS+The+Series+EP+1+Eng+Sub', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-91220',
+    title: 'TharnType: The Series',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/91220-tharntype',
+    synopsis: 'Hot-headed freshman Type is paired with openly gay drummer Tharn as college dorm roommates, where hostility slowly melts into devotion.',
+    year: 2019,
+    releaseDate: '2019-10-07',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/37995c-tharntype', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-204110',
+    title: 'The Eclipse',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/204110-the-eclipse',
+    synopsis: 'At strict Suppalo all-boys school, head prefect Akk is tasked with stopping mysterious rebel transfer student Ayan from uncovering the truth behind a school curse.',
+    year: 2022,
+    releaseDate: '2022-08-12',
+    episodes: 12,
+    genres: ['BL', 'Mystery', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39222c-the-eclipse', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-203550',
+    title: 'Vice Versa',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/203550-vice-versa',
+    synopsis: 'Colorist Talay wakes up in anotherboy’s body inside an alternate universe and teams up with fellow universe-traveler Puen to find their portkey home.',
+    year: 2022,
+    releaseDate: '2022-07-16',
+    episodes: 12,
+    genres: ['BL', 'Sci-Fi & Fantasy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39110c-vice-versa', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-214800',
+    title: 'Never Let Me Go',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/214800-never-let-me-go',
+    synopsis: 'Wealthy heir Nuengdiao is targeted after his father’s assassination, and his chauffeur’s son Palm is appointed his personal bodyguard at school.',
+    year: 2022,
+    releaseDate: '2022-12-13',
+    episodes: 12,
+    genres: ['BL', 'Action & Adventure', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39450c-never-let-me-go', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-122330',
+    title: 'Fish Upon the Sky',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/122330-fish-upon-the-sky',
+    synopsis: 'Nerd dentistry student Pi gets a makeover to pursue his campus crush, only to attract the relentless affection of medical rival Mork.',
+    year: 2021,
+    releaseDate: '2021-04-09',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/38220c-fish-upon-the-sky', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-114200',
+    title: 'Manner of Death',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/114200-manner-of-death',
+    synopsis: 'Medical examiner Dr. Bun rules a woman’s hanging a homicide and finds that prime suspect Tan—her mysterious tutor—wants to help solve the case.',
+    year: 2020,
+    releaseDate: '2020-11-30',
+    episodes: 14,
+    genres: ['BL', 'Crime', 'Mystery', 'Romance'],
+    platforms: [
+      { name: 'WeTV', url: 'https://wetv.vip/en/search/Manner%20of%20Death', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-198220',
+    title: 'Triage',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/198220-triage',
+    synopsis: 'Emergency room resident Dr. Tin becomes trapped in a time loop every night he fails to save college student Tol’s life.',
+    year: 2022,
+    releaseDate: '2022-04-18',
+    episodes: 13,
+    genres: ['BL', 'Sci-Fi & Fantasy', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'YouTube', url: 'https://www.youtube.com/results?search_query=Triage+The+Series+BL+EP+1', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-228500',
+    title: 'Laws of Attraction',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/228500-laws-of-attraction',
+    synopsis: 'Grieving uncle Tinn seeks justice after his niece is killed in a hit-and-run and clashes with cynical, sharp-tongued defense lawyer Charn.',
+    year: 2023,
+    releaseDate: '2023-07-15',
+    episodes: 8,
+    genres: ['BL', 'Crime', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=Laws%20of%20Attraction', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-230100',
+    title: 'I Feel You Linger in the Air',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/230100-i-feel-you-linger-in-the-air',
+    synopsis: 'Architect Jom is renovating a historic Chiang Mai mansion when he is pulled back into 1920s Siam and meets warm-hearted nobleman Khun Yai.',
+    year: 2023,
+    releaseDate: '2023-08-18',
+    episodes: 12,
+    genres: ['BL', 'Sci-Fi & Fantasy', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/search?q=I+Feel+You+Linger+in+the+Air', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-221100',
+    title: 'Bed Friend',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/221100-bed-friend',
+    synopsis: 'Office coworkers King and Uea start a strictly no-strings-attached arrangement that gradually heals Uea’s past wounds.',
+    year: 2023,
+    releaseDate: '2023-02-18',
+    episodes: 10,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39511c-bed-friend', source: 'official' },
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=Bed%20Friend', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-224400',
+    title: 'A Boss and a Babe',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/224400-a-boss-and-a-babe',
+    synopsis: 'Cheerful esports gamer Cher lands an internship at a game company and discovers his insomniac CEO Gun can only sleep listening to Cher’s ASMR.',
+    year: 2023,
+    releaseDate: '2023-03-03',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39865c-a-boss-and-a-babe', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-231500',
+    title: 'Dangerous Romance',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/231500-dangerous-romance',
+    synopsis: 'Working-class scholarship student Sailom is hired to tutor wealthy high school bully Kanghan, turning animosity into deep loyalty.',
+    year: 2023,
+    releaseDate: '2023-08-18',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40112c-dangerous-romance', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-229800',
+    title: 'Hidden Agenda',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/229800-hidden-agenda',
+    synopsis: 'University student Zo asks debate club star Joke to coach him on wooing his crush, unaware that Joke’s real agenda is winning Zo.',
+    year: 2023,
+    releaseDate: '2023-07-09',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40095c-hidden-agenda', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-225100',
+    title: 'Step By Step',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/225100-step-by-step',
+    synopsis: 'Enthusiastic new digital marketing team member Pat clashes with and gradually falls for his demanding, perfectionist department manager Jeng.',
+    year: 2023,
+    releaseDate: '2023-04-18',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'WeTV', url: 'https://wetv.vip/en/search/Step%20By%20Step', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-245200',
+    title: 'My Love Mix-Up! Thailand',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/245200-my-love-mix-up',
+    synopsis: 'High schooler Atom borrows an eraser from his crush Matmee and finds Basketball player Kongthap’s name written on it—sparking a chain of romantic misunderstandings.',
+    year: 2024,
+    releaseDate: '2024-06-07',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40585c-my-love-mix-up', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-252300',
+    title: 'Kidnap',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/252300-kidnap',
+    synopsis: 'Needing money for his brother’s medication, stuntman Min accepts a job to kidnap wealthy heir Q—but refuses the order to kill him and hides Q in his home.',
+    year: 2024,
+    releaseDate: '2024-09-06',
+    episodes: 12,
+    genres: ['BL', 'Action & Adventure', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Netflix', url: 'https://www.netflix.com/search?q=Kidnap', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/search?q=Kidnap', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-253100',
+    title: 'The Trainee',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/253100-the-trainee',
+    synopsis: 'Passionate film student Ryan begins an internship as an assistant director at a production house and works closely with sharp-eyed AD Jane.',
+    year: 2024,
+    releaseDate: '2024-06-30',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40620c-the-trainee', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-254100',
+    title: 'Love Sea',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/254100-love-sea',
+    synopsis: 'Romance novelist Tongrak travels to a southern island looking for inspiration and hires talkative local diver Mahasamut as his guide.',
+    year: 2024,
+    releaseDate: '2024-06-09',
+    episodes: 10,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40595c-love-sea', source: 'official' },
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=Love%20Sea', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-255900',
+    title: 'Sunset x Vibes',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/255900-sunset-x-vibes',
+    synopsis: 'Jewelry design intern Salin discovers that his secret weekend partner Sun is actually the CEO of the luxury company where he just started working.',
+    year: 2024,
+    releaseDate: '2024-06-15',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=Sunset%20x%20Vibes', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-256500',
+    title: 'This Love Doesn’t Have Long Beans',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/256500-this-love-doesnt-have-long-beans',
+    synopsis: 'Model Plawan enters a cooking competition hosted by fiery Chef Oab to win the right to take over Oab’s beloved basil restaurant.',
+    year: 2024,
+    releaseDate: '2024-07-05',
+    episodes: 8,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=This%20Love%20Doesnt%20Have%20Long%20Beans', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-257100',
+    title: 'Monster Next Door',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/257100-monster-next-door',
+    synopsis: 'Introverted Diew and outgoing party-loving neighbor God begin talking through their adjoining apartment balconies without seeing each other’s faces.',
+    year: 2024,
+    releaseDate: '2024-08-08',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'WeTV', url: 'https://wetv.vip/en/search/Monster%20Next%20Door', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-257800',
+    title: 'Every You, Every Me',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/257800-every-you-every-me',
+    synopsis: 'Through shifting timelines and parallel stories, two young men keep finding their way back to one another whenever the rain falls.',
+    year: 2024,
+    releaseDate: '2024-10-06',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/search?q=Every+You+Every+Me', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-243100',
+    title: 'Last Meal Universe (Bokura no Shokutaku)',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/243100-our-dining-table',
+    synopsis: 'Solitary salaryman Yutaka struggles to eat around others until he meets kind-hearted Minoru and his five-year-old brother Tane in a park over homemade rice balls.',
+    year: 2023,
+    releaseDate: '2023-04-06',
+    episodes: 10,
+    genres: ['BL', 'Drama', 'Romance', 'Family'],
+    platforms: [
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/3315/our-dining-table-2023', source: 'official' },
+      { name: 'Crunchyroll', url: 'https://www.crunchyroll.com/search?q=Our+Dining+Table', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-135990',
+    title: 'Kieta Hatsukoi (My Love Mix-Up!)',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/135990-kieta-hatsukoi',
+    synopsis: 'High schooler Aoki sees Ida’s name on an eraser borrowed from his crush Hashimoto, leading Ida to mistakenly believe Aoki has a secret crush on him.',
+    year: 2021,
+    releaseDate: '2021-10-09',
+    episodes: 10,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/38215c-my-love-mix-up', source: 'official' },
+      { name: 'Netflix', url: 'https://www.netflix.com/search?q=My+Love+Mix-Up', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-208550',
+    title: 'Takara-kun & Amagi-kun',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/208550-takara-kun-to-amagi-kun',
+    synopsis: 'Popular, stoic classmate Takara and bright, earnest Amagi quietly begin dating in high school while keeping their relationship a secret.',
+    year: 2022,
+    releaseDate: '2022-08-19',
+    episodes: 8,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/38738c-takara-kun-amagi-kun', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/2899/takara-kun-and-amagi-kun-2022', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-206770',
+    title: 'Minato’s Laundromat (Minato Shouji Coin Laundry)',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/206770-minatos-laundromat',
+    synopsis: 'Former corporate worker Akira Minato takes over his grandfather’s coin laundry and forms an unexpected bond with handsome high school swimmer Shintaro.',
+    year: 2022,
+    releaseDate: '2022-07-06',
+    episodes: 24,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/2825/minatos-laundromat-2022', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-212900',
+    title: 'Eternal Yesterday (Eien no Kino)',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/212900-eternal-yesterday',
+    synopsis: 'Cheerful Koichi is struck by a truck right before his classmate Mitsuru’s eyes—yet gets back up the next day as a "living corpse" so they can cherish their remaining time.',
+    year: 2022,
+    releaseDate: '2022-10-21',
+    episodes: 8,
+    genres: ['BL', 'Sci-Fi & Fantasy', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/38915c-eternal-yesterday', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/3010/eternal-yesterday-2022', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-219100',
+    title: 'The End of the World With You (Bokura no Micro na Shuumatsu)',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/219100-the-end-of-the-world-with-you',
+    synopsis: 'With a giant meteor ten days away from destroying Earth, Masumi runs into Ritsu—the ex-lover who broke his heart back in university.',
+    year: 2023,
+    releaseDate: '2023-01-30',
+    episodes: 8,
+    genres: ['BL', 'Sci-Fi & Fantasy', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39290c-the-end-of-the-world-with-you', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/3192/the-end-of-the-world-with-you-2023', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-220900',
+    title: 'Jack o’ Frost',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/220900-jack-o-frost',
+    synopsis: 'After a breakup argument with his partner Fumiya, illustrator Ritsuka slips in the winter snow and wakes up having lost only his memories of Fumiya.',
+    year: 2023,
+    releaseDate: '2023-02-17',
+    episodes: 6,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39340c-jack-o-frost', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/3225/jack-o-frost-2023', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-225800',
+    title: 'Naked Dining (Zenra Meshi)',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/225800-naked-dining',
+    synopsis: 'Model government clerkunta Ichijo relieves stress by cooking and eating naked alone at home, until childhood friend Mahiro moves in with fresh produce.',
+    year: 2023,
+    releaseDate: '2023-04-14',
+    episodes: 10,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/3322/naked-dining-2023', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-228900',
+    title: 'Tokyo in April is… (Shigatsu no Tokyo wa…)',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/228900-tokyo-in-april-is',
+    synopsis: 'Returning to Tokyo after ten years in America, Kazuma reunites at a design agency with his first love Ren—whom he hasn’t seen since an abrupt separation in middle school.',
+    year: 2023,
+    releaseDate: '2023-06-16',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39945c-tokyo-in-april-is', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/3470/tokyo-in-april-is-2023', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-235500',
+    title: 'I Cannot Reach You (Kimi ni wa Todokanai)',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/235500-i-cannot-reach-you',
+    synopsis: 'Childhood best friends Yamato—smart and handsome—and Kakeru—bright and average—navigate unspoken feelings in high school.',
+    year: 2023,
+    releaseDate: '2023-09-27',
+    episodes: 8,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Netflix', url: 'https://www.netflix.com/search?q=I+Cannot+Reach+You', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-236900',
+    title: 'If It’s With You (Kimi to nara Koi wo Shite Mite mo)',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/236900-if-its-with-you',
+    synopsis: 'On scenic Enoshima Island, transfer student Amane meets warm-hearted Ryuji over a lunchbox by the sea.',
+    year: 2023,
+    releaseDate: '2023-10-06',
+    episodes: 5,
+    genres: ['BL', 'Drama', 'Romance', 'Coming of Age'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40310c-if-its-with-you', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/3710/if-its-with-you-2023', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-238100',
+    title: 'One Room Angel',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/238100-one-room-angel',
+    synopsis: 'Lethargic convenience store clerk Kouki wakes up from a stabbing to find a beautiful, amnesiac winged angel living in his tiny one-room apartment.',
+    year: 2023,
+    releaseDate: '2023-10-20',
+    episodes: 6,
+    genres: ['BL', 'Sci-Fi & Fantasy', 'Drama'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40235c-one-room-angel', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/3742/one-room-angel-2023', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-244100',
+    title: 'Perfect Propose',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/244100-perfect-propose',
+    synopsis: 'Overworked salaryman Hiro takes in Kai—the childhood friend he once promised to marry—who cooks warm home-cooked meals for him every night.',
+    year: 2024,
+    releaseDate: '2024-02-02',
+    episodes: 6,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/3992/perfect-propose-2024', source: 'official' },
+      { name: 'Viki', url: 'https://www.viki.com/tv/40412c-perfect-propose', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-247800',
+    title: 'Love Is Better the Second Time Around (Koi wo Suru nara Nidome ga Joto)',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/247800-love-is-better-the-second-time-around',
+    synopsis: 'Business magazine editor Miyata is assigned to a column by popular university associate professor Iwanaga—his high school first love with whom he eloped and broke up.',
+    year: 2024,
+    releaseDate: '2024-03-06',
+    episodes: 6,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40455c-love-is-better-the-second-time-around', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/4055/love-is-better-the-second-time-around-2024', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-250990',
+    title: 'At 25:00, in Akasaka (25-ji, Akasaka de)',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/250990-at-25-00-in-akasaka',
+    synopsis: 'Rookie actor Yuki Shirasaki lands a co-starring role opposite his popular university senior Asami Hayama in a BL drama, and Hayama proposes they date for method acting.',
+    year: 2024,
+    releaseDate: '2024-04-18',
+    episodes: 10,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/4210/at-25-00-in-akasaka-2024', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-252800',
+    title: 'Living With Him (Kare no Iru Seikatsu)',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/252800-living-with-him',
+    synopsis: 'Domestic college freshman Ryota Natsukawa discovers his new dorm roommate is childhood friend Kazuhito Tanaka, who has secretly loved him for years.',
+    year: 2024,
+    releaseDate: '2024-04-12',
+    episodes: 8,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40499c-living-with-him', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/4198/living-with-him-2024', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-254900',
+    title: 'I Hear the Sunspot (Hidamari ga Kikoeru)',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/254900-i-hear-the-sunspot',
+    synopsis: 'Hearing-impaired university student Kohei Sugihara hires hungry, bright-spirited classmate Taichi Sagawa to take lecture notes in exchange for homemade bento lunches.',
+    year: 2024,
+    releaseDate: '2024-06-26',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/4450/i-hear-the-sunspot-2024', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-256200',
+    title: 'Cosmetic Playlover',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/256200-cosmetic-playlover',
+    synopsis: 'Dedicated men’s cosmetics consultant Natsume is paired in a sales duo with aloof, talented junior Sahashi, who quickly discovers Natsume’s feelings.',
+    year: 2024,
+    releaseDate: '2024-08-06',
+    episodes: 8,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40680c-cosmetic-playlover', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/4590/cosmetic-playlover-2024', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-256800',
+    title: 'Sugar Dog Life',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/256800-sugar-dog-life',
+    synopsis: 'Baby-faced twenty-year-old college student Isumi Sakuraba is mistaken for a minor by kindly neighborhood police officer Kyosuke Amasawa, leading to late-night home-cooked dinners.',
+    year: 2024,
+    releaseDate: '2024-08-04',
+    episodes: 9,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40675c-sugar-dog-life', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/4588/sugar-dog-life-2024', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-257200',
+    title: 'Takara’s Treasure (Takara no Vidro)',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/257200-takaras-treasure',
+    synopsis: 'Fukuoka youth Taishin moves to Tokyo to attend the same university as Takara, the stranger who comforted him when his beloved pet died.',
+    year: 2024,
+    releaseDate: '2024-07-01',
+    episodes: 10,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40635c-takaras-treasure', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/4492/takaras-treasure-2024', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-257500',
+    title: 'Happy of the End',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/257500-happy-of-the-end',
+    synopsis: 'Homeless and broken, Chihiro meets mysterious Haoran in a bar and moves into his apartment as both confront deep scars from their pasts.',
+    year: 2024,
+    releaseDate: '2024-09-03',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40710c-happy-of-the-end', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/4685/happy-of-the-end-2024', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-258100',
+    title: 'Smells Like Green Spirit',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/258100-smells-like-green-spirit',
+    synopsis: 'In a rural Japanese town, bullied high schooler Mishima finds solace wearing his mother’s lipstick on the school roof—where classmate Kirino discovers his secret.',
+    year: 2024,
+    releaseDate: '2024-09-19',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Coming of Age'],
+    platforms: [
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/search?q=Smells+Like+Green+Spirit', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-258500',
+    title: 'Love In The Air: Koi no Yokan (Japan)',
+    country: 'Japan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/258500-love-in-the-air-japan',
+    synopsis: 'Japanese adaptation following architecture students Rei and Kai as they cross paths with charismatic riders Arashi and Fuma.',
+    year: 2024,
+    releaseDate: '2024-11-03',
+    episodes: 10,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/search?q=Love+in+the+Air+Koi+no+Yokan', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-103900',
+    title: 'Where Your Eyes Linger',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/103900-where-your-eyes-linger',
+    synopsis: 'Eighteen-year-old chaebol heir Han Tae Joo and his lifelong friend and martial arts bodyguard Kang Gook test the unspoken line between duty and love.',
+    year: 2020,
+    releaseDate: '2020-05-22',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/37107c-where-your-eyes-linger', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-115400',
+    title: 'Color Rush',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/115400-color-rush',
+    synopsis: 'Monochromatic high schooler Yeon Woo, who only sees the world in shades of gray, experiences a vivid burst of color the moment he sees transfer student Yoo Han.',
+    year: 2020,
+    releaseDate: '2020-12-30',
+    episodes: 8,
+    genres: ['BL', 'Mystery', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/37542c-color-rush', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-199800',
+    title: 'Blueming',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/199800-blueming',
+    synopsis: 'Film major Cha Si Won works hard to be popular in university, only to clash with effortlessly handsome freshman Hyeong Da Un.',
+    year: 2022,
+    releaseDate: '2022-03-31',
+    episodes: 11,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=Blueming', source: 'official' },
+      { name: 'Viki', url: 'https://www.viki.com/tv/40115c-blueming', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-213500',
+    title: 'Roommates of Poongduck 304',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/213500-roommates-of-poongduck-304',
+    synopsis: 'Chaebol third-generation intern Ji Ho Jun is kicked out of home into Poongduck Villa—discovering that his strict new team leader Seo Jae Yoon is his landlord.',
+    year: 2022,
+    releaseDate: '2022-10-13',
+    episodes: 8,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/38789c-roommates-of-poongduck-304', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-216700',
+    title: 'The New Employee',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/216700-the-new-employee',
+    synopsis: 'Late-20s advertising intern Woo Seung Hyun begins working under workaholic department manager Kim Jong Chan.',
+    year: 2022,
+    releaseDate: '2022-12-21',
+    episodes: 7,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/38909c-the-new-employee', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-222500',
+    title: 'Unintentional Love Story',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/222500-unintentional-love-story',
+    synopsis: 'Suspended office worker Ji Won Young tracks down reclusive master ceramist Yoon Tae Joon in Gangneung to clear his name, accidentally falling in love.',
+    year: 2023,
+    releaseDate: '2023-03-17',
+    episodes: 10,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=Unintentional%20Love%20Story', source: 'official' },
+      { name: 'Viki', url: 'https://www.viki.com/tv/39920c-unintentional-love-story', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-221400',
+    title: 'A Shoulder to Cry On',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/221400-a-shoulder-to-cry-on',
+    synopsis: 'High school archery prospect Lee Da Yeol’s scholarship is threatened after a nurse’s office misunderstanding with mischievous class president Jo Tae Hyun.',
+    year: 2023,
+    releaseDate: '2023-03-15',
+    episodes: 7,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39505c-a-shoulder-to-cry-on', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-229100',
+    title: 'Jun & Jun',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/229100-jun-and-jun',
+    synopsis: 'Former idol Lee Jun starts an internship at a cosmetics company, only to find his childhood first love Choi Jun is the general manager.',
+    year: 2023,
+    releaseDate: '2023-07-20',
+    episodes: 8,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39892c-jun-jun', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-231100',
+    title: 'Sing My Crush',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/231100-sing-my-crush',
+    synopsis: 'Aspiring indie guitarist Ba Ram and loyal manager Han Tae navigate friendship and unspoken love from high school to the music stage.',
+    year: 2023,
+    releaseDate: '2023-08-02',
+    episodes: 8,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=Sing%20My%20Crush', source: 'official' },
+      { name: 'Viki', url: 'https://www.viki.com/tv/40045c-sing-my-crush', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-233800',
+    title: 'Love Class 2',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/233800-love-class-2',
+    synopsis: 'Three university freshmen taking a college course on love navigate crushes, heartbreak, and new beginnings.',
+    year: 2023,
+    releaseDate: '2023-08-11',
+    episodes: 10,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40015c-love-class-2', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-236100',
+    title: 'Love Mate',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/236100-love-mate',
+    synopsis: 'Cynical media team leader Seo Lee Jun agrees to a three-month dating trial with persistent new employee Jeong Ha Ram.',
+    year: 2023,
+    releaseDate: '2023-05-04',
+    episodes: 8,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39785c-love-mate', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-237500',
+    title: 'Love Tractor',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/237500-love-tractor',
+    synopsis: 'Exhausted Seoul law student Seon Yul retreats to his grandfather’s countryside farm and meets sunny, muscular neighbor Ye Chan.',
+    year: 2023,
+    releaseDate: '2023-06-07',
+    episodes: 8,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=Love%20Tractor', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-234200',
+    title: 'Why R U? Korea',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/234200-why-r-u',
+    synopsis: 'University theater student Lee Won discovers his younger sister is writing a BL web novel shipping him with his sworn rival Ji Oh.',
+    year: 2023,
+    releaseDate: '2023-08-24',
+    episodes: 8,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40065c-why-r-u', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-87400',
+    title: 'HIStory3: Trapped',
+    country: 'Taiwan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/87400-history3-trapped',
+    synopsis: 'Homicide detective Meng Shao Fei relentlessly investigates righteous mafia boss Tang Yi after a double shooting that killed Shao Fei’s mentor.',
+    year: 2019,
+    releaseDate: '2019-04-16',
+    episodes: 20,
+    genres: ['BL', 'Action & Adventure', 'Crime', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/36478c-history3-trapped', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-94100',
+    title: 'HIStory3: Make Our Days Count',
+    country: 'Taiwan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/94100-history3-make-our-days-count',
+    synopsis: 'Hot-headed high schooler Xiang Hao Ting and lonely scholarship student Yu Xi Gu go from academic rivals to deeply devoted partners.',
+    year: 2019,
+    releaseDate: '2019-10-16',
+    episodes: 20,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/36809c-history3-make-our-days-count', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-78100',
+    title: 'HIStory2: Crossing the Line',
+    country: 'Taiwan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/78100-history2-crossing-the-line',
+    synopsis: 'Delinquent transfer student Xia Yu Hao is recruited into the high school volleyball team by injured captain Qiu Zi Xuan.',
+    year: 2018,
+    releaseDate: '2018-03-06',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/35872c-history2-crossing-the-line', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-120800',
+    title: 'HIStory4: Close to You',
+    country: 'Taiwan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/120800-history4-close-to-you',
+    synopsis: 'Wedding planner Xiao Li Cheng pretends to like men to impress a crush, enlisting coworker Teng Mu Ren to practice romance.',
+    year: 2021,
+    releaseDate: '2021-03-14',
+    episodes: 20,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/37721c-history4-close-to-you', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-124100',
+    title: 'Be Loved in House: I Do',
+    country: 'Taiwan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/124100-be-loved-in-house-i-do',
+    synopsis: 'Cold new studio director Jin Yu Zhen imposes a "no-singles" rule at a jewelry design studio and moves into employee Shi Lei’s house.',
+    year: 2021,
+    releaseDate: '2021-05-20',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/37795c-be-loved-in-house-i-do', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-196200',
+    title: 'Plus & Minus',
+    country: 'Taiwan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/196200-plus-and-minus',
+    synopsis: 'Divorce attorneys Cheng Ze Shou and Fu Li Gong have been best friends since childhood, until a drunken night changes their twenty-year bond.',
+    year: 2022,
+    releaseDate: '2022-04-15',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/38462c-plus-minus', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/2635/plus-and-minus-2022', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-207800',
+    title: 'About Youth',
+    country: 'Taiwan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/207800-about-youth',
+    synopsis: 'Quiet high school student Ye Guang runs for student council president and finds comfort in the music of underground band singer Xu Qi Zhang.',
+    year: 2022,
+    releaseDate: '2022-08-29',
+    episodes: 8,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/38742c-about-youth', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/2915/about-youth-2022', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-211400',
+    title: 'My Tooth Your Love',
+    country: 'Taiwan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/211400-my-tooth-your-love',
+    synopsis: 'Bistro owner Bai Lang suffers from severe dental phobia since childhood, until his sister refers him to cool arch-dentist Jin Xun An.',
+    year: 2022,
+    releaseDate: '2022-10-14',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/38834c-my-tooth-your-love', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/2988/my-tooth-your-love-2022', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-228200',
+    title: 'Stay By My Side',
+    country: 'Taiwan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/228200-stay-by-my-side',
+    synopsis: 'Raised by his grandfather in a temple, Gu Bu Xia begins hearing ghosts—until he discovers touching his aloof dorm roommate Jiang Chi silences the voices.',
+    year: 2023,
+    releaseDate: '2023-07-07',
+    episodes: 10,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39901c-stay-by-my-side', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/3512/stay-by-my-side-2023', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-234900',
+    title: 'You Are Mine',
+    country: 'Taiwan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/234900-you-are-mine',
+    synopsis: 'Cheerful secretary Yao Shun Yu is hired to assist irritable, insomniac general manager Xia Shang Zhou.',
+    year: 2023,
+    releaseDate: '2023-09-15',
+    episodes: 10,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40062c-you-are-mine', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/3650/you-are-mine-2023', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-239500',
+    title: 'VIP Only',
+    country: 'Taiwan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/239500-vip-only',
+    synopsis: 'Traditional gourmet chef Gu Jinsheng inspires his upstairs neighbor, BL novelist Liu Li, through comforting handmade dishes.',
+    year: 2023,
+    releaseDate: '2023-11-24',
+    episodes: 10,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40210c-vip-only', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/3790/vip-only-2023', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-241800',
+    title: 'Anti Reset',
+    country: 'Taiwan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/241800-anti-reset',
+    synopsis: 'Cold-hearted university student Chu Yi Ping receives prototype bionic humanoid companion Ever 9 after injuring his hand.',
+    year: 2024,
+    releaseDate: '2024-02-02',
+    episodes: 10,
+    genres: ['BL', 'Sci-Fi & Fantasy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40360c-anti-reset', source: 'official' },
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=Anti%20Reset', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-257900',
+    title: 'First Note of Love',
+    country: 'Taiwan',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/257900-first-note-of-love',
+    synopsis: 'Reclusive musical prodigy Neil, grieving the loss of his brother and bandmate, meets devoted university songwriter Sea.',
+    year: 2024,
+    releaseDate: '2024-08-12',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40665c-first-note-of-love', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/4582/first-note-of-love-2024', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-65900',
+    title: 'Addicted (Shangyin)',
+    country: 'China',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/65900-addicted',
+    synopsis: 'Working-class student Bai Luo Yin and wealthy general’s son Gu Hai become high school classmates and stepbrothers in Beijing.',
+    year: 2016,
+    releaseDate: '2016-01-29',
+    episodes: 15,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/35611c-addicted', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-229900',
+    title: 'Stay With Me',
+    country: 'China',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/229900-stay-with-me',
+    synopsis: 'High schooler Su Yu, living modestly with his father, clashes with wealthy new classmate Wu Bi—before discovering their parents have remarried.',
+    year: 2023,
+    releaseDate: '2023-07-07',
+    episodes: 24,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40008c-stay-with-me', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/3525/stay-with-me-2023', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-80200',
+    title: 'Guardian (Zhen Hun)',
+    country: 'China',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/80200-guardian',
+    synopsis: 'Special Investigation chief Zhao Yunlan and mysterious university professor Shen Wei investigate supernatural cases tied to a ten-thousand-year-old promise.',
+    year: 2018,
+    releaseDate: '2018-06-13',
+    episodes: 40,
+    genres: ['BL', 'Sci-Fi & Fantasy', 'Mystery', 'Drama'],
+    platforms: [
+      { name: 'YouTube', url: 'https://www.youtube.com/results?search_query=Guardian+Zhen+Hun+EP+1+Eng+Sub', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-224900',
+    title: 'A League of Nobleman (Jun Zi Meng)',
+    country: 'China',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/224900-a-league-of-nobleman',
+    synopsis: 'Noodle vendor and amateur detective Zhang Ping partners with Vice Minister Lan Jue to solve mysteries in the imperial capital.',
+    year: 2023,
+    releaseDate: '2023-01-30',
+    episodes: 29,
+    genres: ['BL', 'Mystery', 'Drama'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/39612c-a-league-of-nobleman', source: 'official' },
+      { name: 'WeTV', url: 'https://wetv.vip/en/search/A%20League%20of%20Nobleman', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-249500',
+    title: 'The Spirealm (Zhi Ming You Xi)',
+    country: 'China',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/249500-the-spirealm',
+    synopsis: 'VR game designer Ling Jiu Shi is pulled into a world of twelve deadly supernatural doors where seasoned guide Ruan Lan Zhu protects him.',
+    year: 2024,
+    releaseDate: '2024-02-02',
+    episodes: 38,
+    genres: ['BL', 'Sci-Fi & Fantasy', 'Mystery', 'Action & Adventure'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40495c-the-spirealm', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-105200',
+    title: 'Gameboys',
+    country: 'Philippines',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/105200-gameboys',
+    synopsis: 'Live-stream gamer Cairo loses a match to mysterious fan Gavreel during lockdown, sparking an online courtship across video calls.',
+    year: 2020,
+    releaseDate: '2020-05-22',
+    episodes: 14,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'YouTube', url: 'https://www.youtube.com/results?search_query=Gameboys+The+IdeaFirst+Company+Episode+1', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/search?q=Gameboys', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-105600',
+    title: 'Hello Stranger',
+    country: 'Philippines',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/105600-hello-stranger',
+    synopsis: 'Bookish quiz bee champion Mico is paired with varsity basketball star Xavier for an online literature project.',
+    year: 2020,
+    releaseDate: '2020-06-24',
+    episodes: 8,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'YouTube', url: 'https://www.youtube.com/results?search_query=Hello+Stranger+Black+Sheep+Episode+1', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-109100',
+    title: 'Gaya Sa Pelikula (Like in the Movies)',
+    country: 'Philippines',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/109100-gaya-sa-pelikula',
+    synopsis: 'Architecture student Karl takes in his loud neighbor Vlad after a blackout, agreeing to pretend to be boyfriends to hide Vlad from his family.',
+    year: 2020,
+    releaseDate: '2020-09-25',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Romance', 'Coming of Age'],
+    platforms: [
+      { name: 'YouTube', url: 'https://www.youtube.com/results?search_query=Gaya+Sa+Pelikula+Episode+1+Globe+Studios', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-68200',
+    title: 'SKAM (Season 3: Isak & Even)',
+    country: 'Norway',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/68200-skam',
+    synopsis: 'Norwegian high school junior Isak Valtersen navigates coming out and first love when charismatic senior Even Bech Næsheim transfers to Hartvig Nissen School.',
+    year: 2016,
+    releaseDate: '2016-10-07',
+    episodes: 10,
+    genres: ['BL', 'Drama', 'Romance', 'Coming of Age'],
+    platforms: [
+      { name: 'YouTube', url: 'https://www.youtube.com/results?search_query=SKAM+Season+3+Episode+1+English+Sub', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-81100',
+    title: 'SKAM France (Season 3: Lucas & Eliott)',
+    country: 'France',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/81100-skam-france',
+    synopsis: 'French high schooler Lucas Lallemant falls deeply for artistic transfer student Eliott Demaury over late-night piano sessions.',
+    year: 2019,
+    releaseDate: '2019-01-25',
+    episodes: 10,
+    genres: ['BL', 'Drama', 'Romance', 'Coming of Age'],
+    platforms: [
+      { name: 'YouTube', url: 'https://www.youtube.com/results?search_query=SKAM+France+Season+3+Episode+1+Eng+Sub', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-239900',
+    title: 'Fellow Travelers',
+    country: 'United States',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/239900-fellow-travelers',
+    synopsis: 'Charismatic diplomat Hawk Fuller and idealistic congressional staffer Tim Laughlin begin a decades-long romance in 1950s Washington, D.C.',
+    year: 2023,
+    releaseDate: '2023-10-27',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'YouTube', url: 'https://www.youtube.com/results?search_query=Fellow+Travelers+Series+Episodes', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-104800',
+    title: 'Love, Victor',
+    country: 'United States',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/104800-love-victor',
+    synopsis: 'New student Victor Salazar adjusts to Creekwood High School in Atlanta while exploring his identity and feelings for barista Benji.',
+    year: 2020,
+    releaseDate: '2020-06-17',
+    episodes: 28,
+    genres: ['BL', 'Comedy', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'YouTube', url: 'https://www.youtube.com/results?search_query=Love+Victor+Season+1+Episode+1', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-235100',
+    title: 'Naughty Babe',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/235100-naughty-babe',
+    synopsis: 'Engaged to business tycoon Yi, Diao fears Yi doesn’t truly love him—until a car accident leaves Diao believing he’s eighteen again.',
+    year: 2023,
+    releaseDate: '2023-09-02',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=Naughty%20Babe', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-242900',
+    title: 'Cooking Crush',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/242900-cooking-crush',
+    synopsis: 'Third-year culinary student Prem teaches stressed medical student Ten how to cook in exchange for a hefty tuition fee.',
+    year: 2023,
+    releaseDate: '2023-11-26',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/search?q=Cooking+Crush', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-248100',
+    title: 'Only Boo!',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/248100-only-boo',
+    synopsis: 'Aspiring idol Kang falls for school cafeteria curry-rice vendor Moo at a rural school far from Bangkok.',
+    year: 2024,
+    releaseDate: '2024-03-31',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40515c-only-boo', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-248500',
+    title: '23.5 (Supporting BL & Queer Ensemble)',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/248500-23-5',
+    synopsis: 'High school students navigate first crushes, astronomy club adventures, and queer youth romance.',
+    year: 2024,
+    releaseDate: '2024-03-08',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Netflix', url: 'https://www.netflix.com/search?q=23.5', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-248900',
+    title: 'City of Stars',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/248900-city-of-stars',
+    synopsis: 'Beloved actor Fueangnakorn and misunderstood villain star Kromoka connect through an anonymous positive social app.',
+    year: 2024,
+    releaseDate: '2024-02-02',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=City%20of%20Stars', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-249200',
+    title: 'Two Worlds',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/249200-two-worlds',
+    synopsis: 'After losing his beloved Tai, Kram falls into a sacred mountain well and wakes up in a parallel world where Tai is alive—but doesn’t remember him.',
+    year: 2024,
+    releaseDate: '2024-03-21',
+    episodes: 10,
+    genres: ['BL', 'Sci-Fi & Fantasy', 'Action & Adventure', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=Two%20Worlds', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-249800',
+    title: 'Deep Night',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/249800-deep-night',
+    synopsis: 'Host club owner’s son Khem secretly admires star aerial acrobat Wela at Deep Night Club.',
+    year: 2024,
+    releaseDate: '2024-03-07',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=Deep%20Night', source: 'official' },
+      { name: 'Viki', url: 'https://www.viki.com/tv/40505c-deep-night', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-251500',
+    title: 'Knock Knock, Boys!',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/251500-knock-knock-boys',
+    synopsis: 'Three broke roommates accept a bet to help virgin housemate Almond find love in order to live rent-free for a year.',
+    year: 2024,
+    releaseDate: '2024-05-30',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'WeTV', url: 'https://wetv.vip/en/search/Knock%20Knock%20Boys', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-252100',
+    title: 'Battle of the Writers',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/252100-battle-of-the-writers',
+    synopsis: 'Five web novelists gather in a lakeside villa to co-write a wuxia story after novelist Shan is accused of plagiarism.',
+    year: 2024,
+    releaseDate: '2024-07-29',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=Battle%20of%20the%20Writers', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-253400',
+    title: 'The Rebound',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/253400-the-rebound',
+    synopsis: 'Former best friends Ryu and Zen reunite on a high school basketball court to save their team from disbandment.',
+    year: 2024,
+    releaseDate: '2024-06-26',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40589c-the-rebound', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-259100',
+    title: 'Bad Guy My Boss',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/259100-bad-guy-my-boss',
+    synopsis: 'Dedicated personal secretary Pat tries to resign after falling in love with his demanding, possessive boss Elyes.',
+    year: 2024,
+    releaseDate: '2024-09-15',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40715c-bad-guy-my-boss', source: 'official' },
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/search?q=Bad+Guy+My+Boss', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-259500',
+    title: 'Peaceful Property',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/259500-peaceful-property',
+    synopsis: 'Heir Home returns to Thailand to sell his family’s properties—only to find every single house is haunted, forcing him to team up with ghost-seeing chef Peach.',
+    year: 2024,
+    releaseDate: '2024-08-28',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Mystery', 'Sci-Fi & Fantasy'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40695c-peaceful-property', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-259900',
+    title: 'High School Frenemy',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/259900-high-school-frenemy',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/537/1343859.jpg',
+    synopsis: 'When two rival school campuses merge, estranged childhood best friends Saint and Shin are forced into the same classroom.',
+    year: 2024,
+    releaseDate: '2024-10-14',
+    episodes: 16,
+    genres: ['BL', 'Drama', 'Campus'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40792c-high-school-frenemy', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-260100',
+    title: 'Pluto / Ploy’s Yearbook (Queer & BL Ensemble)',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/260100-century-bl',
+    synopsis: 'Thai queer romance anthology following intertwined lives and enduring bonds across Bangkok.',
+    year: 2024,
+    releaseDate: '2024-05-01',
+    episodes: 12,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/categories/country/thailand/genre/bl', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-260500',
+    title: 'Caged Again',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/260500-caged-again',
+    synopsis: 'A young penguin shapeshifter transforms into a human boy and enrolls at a boarding school where he meets a black panther shapeshifter.',
+    year: 2024,
+    releaseDate: '2024-11-15',
+    episodes: 10,
+    genres: ['BL', 'Comedy', 'Sci-Fi & Fantasy', 'Romance'],
+    platforms: [
+      { name: 'WeTV', url: 'https://wetv.vip/en/search/Caged%20Again', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-260900',
+    title: 'Spare Me Your Mercy',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/260900-spare-me-your-mercy',
+    synopsis: 'Police Captain Wasan investigates the suspicious deaths of terminally ill patients in his hometown and suspects palliative care physician Dr. Kan.',
+    year: 2024,
+    releaseDate: '2024-11-27',
+    episodes: 8,
+    genres: ['BL', 'Crime', 'Mystery', 'Drama'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=Spare%20Me%20Your%20Mercy', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-261100',
+    title: 'The Heart Killers',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/261100-the-heart-killers',
+    synopsis: 'Tattoo artist Kant is coerced by police into spying on assassin brothers Fadel and Bison—only for Kant and his friend Style to fall for their targets.',
+    year: 2024,
+    releaseDate: '2024-11-20',
+    episodes: 12,
+    genres: ['BL', 'Action & Adventure', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'iQIYI', url: 'https://www.iq.com/search?query=The%20Heart%20Killers', source: 'official' },
+      { name: 'Viki', url: 'https://www.viki.com/tv/40855c-the-heart-killers', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-261500',
+    title: 'Eccentric Romance',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/261500-eccentric-romance',
+    synopsis: 'Thai exchange student Jay and athletic Korean classmate Sung Hoon team up to investigate a campus mystery while growing closer.',
+    year: 2024,
+    releaseDate: '2024-10-10',
+    episodes: 12,
+    genres: ['BL', 'Comedy', 'Mystery', 'Romance'],
+    platforms: [
+      { name: 'Viki', url: 'https://www.viki.com/tv/40750c-eccentric-romance', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-261900',
+    title: 'Seoul Blues',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/261900-seoul-blues',
+    synopsis: 'Childhood friend Min Jun harbors feelings for Jin Ho even while Jin Ho dates someone else, leading to an honest reckoning in Seoul.',
+    year: 2024,
+    releaseDate: '2024-11-01',
+    episodes: 8,
+    genres: ['BL', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/search?q=Seoul+Blues', source: 'official' },
+    ],
+  },
+  {
+    id: 'tmdb-262300',
+    title: 'Checkered Shirt',
+    country: 'South Korea',
+    status: 'completed',
+    sourceUrl: 'https://www.themoviedb.org/tv/262300-checkered-shirt',
+    synopsis: 'Buying a secondhand checkered shirt connects two young men in Seoul with unexpected chemistry.',
+    year: 2025,
+    releaseDate: '2025-01-30',
+    episodes: 8,
+    genres: ['BL', 'Comedy', 'Romance'],
+    platforms: [
+      { name: 'YouTube', url: 'https://www.youtube.com/results?search_query=Checkered+Shirt+Korean+BL+EP+1', source: 'official' },
+    ],
+  },
+];
+
+const VERIFIED_BL_SERIES_CATALOG: Series[] = RAW_BL_SERIES.map(createBlSeries);
+
+let memorySeries: Series[] = [...VERIFIED_BL_SERIES_CATALOG];
+let lastRefreshed: string | null = new Date().toISOString();
+let lastChecked: string | null = new Date().toISOString();
+let sourceOnline = true;
+let refreshing = false;
+let editorial: EditorialPost | null = null;
+let postersEnriched = false;
+
+async function enrichMissingPostersFromTvMaze(): Promise<void> {
+  if (postersEnriched) return;
+  postersEnriched = true;
+  for (const item of memorySeries) {
+    if (item.coverUrl) continue;
+    try {
+      const cleanName = item.title.replace(/\s*\(.*?\)\s*/g, '').trim();
+      const res = await fetch(`https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(cleanName)}`, {
+        signal: AbortSignal.timeout(3500),
+      });
+      if (!res.ok) continue;
+      const data = (await res.json()) as { image?: { original?: string; medium?: string } };
+      const img = data.image?.original || data.image?.medium;
+      if (img) {
+        item.coverUrl = img.replace(/^http:/i, 'https:');
+      }
+    } catch {
+      // Ignore individual TVMaze lookup failures
+    }
+  }
+}
+
+export async function hydrateCatalog(): Promise<void> {
+  const dbRows = await loadSeries();
+  const savedLastRefreshed = await readMeta('last_refreshed');
+  const savedEditorial = parseEditorial(await readMeta('editorial_post'));
+
+  if (dbRows.length >= VERIFIED_BL_SERIES_CATALOG.length) {
+    const verifiedMap = new Map(VERIFIED_BL_SERIES_CATALOG.map((item) => [item.id, item]));
+    memorySeries = dbRows.map((row) => {
+      const verified = verifiedMap.get(row.id);
+      if (!verified) return row;
+      return {
+        ...row,
+        platforms: verified.platforms,
+        seasons: verified.seasons,
+        episodeLinks: verified.episodeLinks,
+      };
+    });
+    lastRefreshed = savedLastRefreshed ?? new Date().toISOString();
+    editorial = savedEditorial ?? (await buildEditorial(memorySeries));
+    sourceOnline = true;
+    void enrichMissingPostersFromTvMaze();
+    return;
+  }
+
+  if (isTmdbConfigured()) {
+    try {
+      await refreshCatalog();
+      void enrichMissingPostersFromTvMaze();
+      return;
+    } catch {
+      // Fallback to verified BL catalog
+    }
+  }
+
+  memorySeries = [...VERIFIED_BL_SERIES_CATALOG];
+  lastRefreshed = new Date().toISOString();
+  lastChecked = lastRefreshed;
+  sourceOnline = true;
+  editorial = await buildEditorial(memorySeries);
+  void enrichMissingPostersFromTvMaze();
+}
+
+export function getCatalogSnapshot(): CatalogResponse {
+  return {
+    series: memorySeries,
+    lastRefreshed,
+    lastChecked,
+    sourceOnline,
+    refreshing,
+    editorial,
+  };
+}
+
+export function catalogIsStale(): boolean {
+  if (!lastRefreshed) return true;
+  const elapsed = Date.now() - new Date(lastRefreshed).getTime();
+  return elapsed > 24 * 60 * 60 * 1000;
+}
+
+export async function refreshCatalog(): Promise<Series[]> {
+  if (refreshing) return memorySeries;
+  refreshing = true;
+  lastChecked = new Date().toISOString();
+
+  try {
+    if (isTmdbConfigured()) {
+      const tmdbList = await fetchTmdbCatalog();
+      if (tmdbList.length > 0) {
+        const byId = new Map<string, Series>();
+        for (const item of VERIFIED_BL_SERIES_CATALOG) {
+          byId.set(item.id, item);
+        }
+        for (const tmdbItem of tmdbList) {
+          const existing = byId.get(tmdbItem.id);
+          if (existing) {
+            byId.set(tmdbItem.id, {
+              ...existing,
+              coverUrl: tmdbItem.coverUrl ?? existing.coverUrl,
+              platforms: ensureMultiPlatforms([...existing.platforms, ...tmdbItem.platforms], existing.title),
+            });
+          } else {
+            const multi = ensureMultiPlatforms(tmdbItem.platforms, tmdbItem.title);
+            byId.set(tmdbItem.id, {
+              ...tmdbItem,
+              episodes: tmdbItem.episodes ?? 12,
+              platforms: multi,
+              episodeLinks: buildEpisodeLinks(tmdbItem.episodes ?? 12, multi, tmdbItem.title),
+            });
+          }
+        }
+        memorySeries = Array.from(byId.values());
+        lastRefreshed = new Date().toISOString();
+        sourceOnline = true;
+        editorial = await buildEditorial(memorySeries);
+        await saveSeries(memorySeries, true);
+        await writeMeta('last_refreshed', lastRefreshed);
+        await writeMeta('editorial_post', JSON.stringify(editorial));
+        void enrichMissingPostersFromTvMaze();
+        return memorySeries;
+      }
+    }
+
+    lastRefreshed = new Date().toISOString();
+    sourceOnline = true;
+    editorial = await buildEditorial(memorySeries);
+    void enrichMissingPostersFromTvMaze();
+    return memorySeries;
+  } finally {
+    refreshing = false;
+  }
+}
+
+export async function getSeriesById(id: string): Promise<Series | undefined> {
+  const existing = memorySeries.find((item) => item.id === id);
+  if (!existing) return undefined;
+
+  if (!existing.coverUrl) {
+    try {
+      const cleanName = existing.title.replace(/\s*\(.*?\)\s*/g, '').trim();
+      const res = await fetch(`https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(cleanName)}`, {
+        signal: AbortSignal.timeout(3500),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { image?: { original?: string; medium?: string } };
+        const img = data.image?.original || data.image?.medium;
+        if (img) existing.coverUrl = img.replace(/^http:/i, 'https:');
+      }
+    } catch {
+      // Ignore error
+    }
+  }
+
+  if (isTmdbConfigured() && id.startsWith('tmdb-')) {
+    const numericId = Number(id.replace('tmdb-', ''));
+    if (Number.isFinite(numericId) && numericId > 0) {
+      const providers = await fetchTmdbWatchProviders(numericId, existing.title);
+      if (providers.length > 0) {
+        const combined = ensureMultiPlatforms([...existing.platforms, ...providers], existing.title);
+        const updated: Series = {
+          ...existing,
+          platforms: combined,
+          episodeLinks: buildEpisodeLinks(existing.episodes ?? 12, combined, existing.title),
+          detailFetchedAt: new Date().toISOString(),
+        };
+        memorySeries = memorySeries.map((s) => (s.id === id ? updated : s));
+        return updated;
+      }
+    }
+  }
+
+  return existing;
+}

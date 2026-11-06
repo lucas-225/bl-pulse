@@ -1,0 +1,1 @@
+{"routes":[{"path":"/","title":"BL Pulse"},{"path":"/discover","title":"Live-action BL discovery"},{"path":"/series/:id","title":"BL series details"},{"path":"/anime","title":"BL anime discovery"},{"path":"/anime/:id","title":"BL anime details"},{"path":"/manga","title":"BL manga discovery"},{"path":"/manga/:id","title":"BL manga details"}]}
