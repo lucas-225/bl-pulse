@@ -10,3 +10,4 @@ coverage/
 *.zip
 public/assets/aistudio/Screenshot*
 public/assets/aistudio/Paste*
+public/assets/aistudio/image_*

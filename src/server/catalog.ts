@@ -21,7 +21,7 @@ import {
   setAppMeta,
   writeMeta,
 } from './db.js';
-import { buildEditorial } from './editorial.js';
+import { buildDailyEditorialSync, buildEditorial, currentDateKey } from './editorial.js';
 
 function cleanTitleForSearch(title: string): string {
   return title
@@ -3461,7 +3461,16 @@ export async function hydrateCatalog(): Promise<void> {
       };
     });
     lastRefreshed = savedLastRefreshed ?? new Date().toISOString();
-    editorial = savedEditorial ?? (await buildEditorial(memorySeries));
+    const todayKey = currentDateKey();
+    const savedIsToday =
+      savedEditorial &&
+      savedEditorial.generatedAt &&
+      currentDateKey(new Date(savedEditorial.generatedAt)) === todayKey &&
+      !savedEditorial.body.includes('Open its source guide');
+    editorial = savedIsToday ? savedEditorial : await buildEditorial(memorySeries);
+    if (!savedIsToday && editorial) {
+      void writeMeta('editorial_post', JSON.stringify(editorial));
+    }
     sourceOnline = true;
     void enrichMissingPostersFromTvMaze();
     return;
@@ -3472,13 +3481,27 @@ export async function hydrateCatalog(): Promise<void> {
   lastChecked = lastRefreshed;
   sourceOnline = true;
   editorial = await buildEditorial(memorySeries);
+  if (editorial) {
+    void writeMeta('editorial_post', JSON.stringify(editorial));
+  }
   if (isDatabaseReady()) {
     void saveSeries(memorySeries, true);
   }
   void enrichMissingPostersFromTvMaze();
 }
 
+export async function refreshMidnightEditorial(): Promise<EditorialPost> {
+  editorial = await buildEditorial(memorySeries);
+  await writeMeta('editorial_post', JSON.stringify(editorial));
+  return editorial;
+}
+
 export function getCatalogSnapshot(): CatalogResponse {
+  const todayKey = currentDateKey();
+  if (!editorial || !editorial.generatedAt || currentDateKey(new Date(editorial.generatedAt)) !== todayKey) {
+    editorial = buildDailyEditorialSync(memorySeries);
+    void writeMeta('editorial_post', JSON.stringify(editorial));
+  }
   return {
     series: memorySeries,
     lastRefreshed,

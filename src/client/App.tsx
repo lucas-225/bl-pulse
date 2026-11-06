@@ -422,10 +422,13 @@ function HomePage({ catalog, loading }: { catalog: CatalogResponse; loading: boo
 }
 
 function EditorialCard({ post }: { post: NonNullable<CatalogResponse['editorial']> }) {
+  const dateLabel = post.generatedAt
+    ? new Date(post.generatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }).toUpperCase()
+    : 'TODAY';
   return (
     <section className="editorial-card">
       <div className="editorial-icon"><WandSparkles size={20} /></div>
-      <div className="editorial-content"><div className="eyebrow">A NOTE FROM THE SIGNAL <span className="editorial-source">{post.source === 'AI-assisted' ? 'AI · SOURCE-GROUNDED' : 'CATALOG PICK'}</span></div><h2>{post.title}</h2><p>{post.body}</p></div>
+      <div className="editorial-content"><div className="eyebrow">A NOTE FROM THE SIGNAL <span className="editorial-source">DAILY 12:00 AM PICK · {dateLabel}</span></div><h2>{post.title}</h2><p>{post.body}</p></div>
       <span className="editorial-decoration">✳</span>
     </section>
   );

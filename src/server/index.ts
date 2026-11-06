@@ -22,6 +22,7 @@ import {
   getSeriesById,
   hydrateCatalog,
   refreshCatalog,
+  refreshMidnightEditorial,
   removeSeries,
   runMarketAutoSync,
   updateMonetizationConfig,
@@ -142,6 +143,20 @@ async function start() {
     await initDatabase();
     await Promise.all([hydrateCatalog(), hydrateAnalytics()]);
   })();
+
+  // Schedule "A Note From The Signal" to dynamically update every night at 12:00 AM (00:00)
+  function scheduleNextMidnightEditorialUpdate() {
+    const now = new Date();
+    const nextMidnight = new Date(now);
+    nextMidnight.setHours(24, 0, 5, 0); // 12:00:05 AM
+    const msUntilMidnight = Math.max(1000, nextMidnight.getTime() - now.getTime());
+    setTimeout(() => {
+      void refreshMidnightEditorial().finally(() => {
+        scheduleNextMidnightEditorialUpdate();
+      });
+    }, msUntilMidnight).unref();
+  }
+  scheduleNextMidnightEditorialUpdate();
 
   app.get('/api/health', (_req, res) => {
     const snapshot = getCatalogSnapshot();
