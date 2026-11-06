@@ -10,16 +10,15 @@ export function normalizeDatabaseUrl(rawUrl: string): string {
   if (!trimmed) return '';
   try {
     const parsed = new URL(trimmed);
-    // In TiDB Cloud / MySQL, '/sys' is a read-only system schema.
-    // Rewrite '/sys' or empty path to '/test' (TiDB Serverless default writable DB).
-    if (!parsed.pathname || parsed.pathname === '/' || parsed.pathname === '/sys') {
-      parsed.pathname = '/test';
+    // Route '/sys', '/test', or empty path to the production '/blpulse' database schema
+    if (!parsed.pathname || parsed.pathname === '/' || parsed.pathname === '/sys' || parsed.pathname === '/test') {
+      parsed.pathname = '/blpulse';
     }
     parsed.searchParams.delete('ssl-mode');
     parsed.searchParams.delete('sslaccept');
     return parsed.toString();
   } catch {
-    return trimmed.replace(/\/sys(\?|$)/, '/test$1');
+    return trimmed.replace(/\/(sys|test)(\?|$)/, '/blpulse$2');
   }
 }
 
