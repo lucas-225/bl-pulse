@@ -27,11 +27,11 @@ const COUNTRY_LABELS: Record<string, string> = {
 };
 
 function headingFor(type: AniListMediaType): string {
-  return type === 'ANIME' ? 'BL Anime' : 'BL Manga';
+  return type === 'ANIME' ? 'BL Anime' : 'BL Comic';
 }
 
 function browsePath(type: AniListMediaType): string {
-  return type === 'ANIME' ? '/anime' : '/manga';
+  return type === 'ANIME' ? '/anime' : '/comic';
 }
 
 function boundedHeading(value: string): string {
@@ -66,7 +66,7 @@ export function MediaCard({ item }: { item: MediaTitle }) {
 export function MediaSpotlightRail({ type, items }: { type: AniListMediaType; items: MediaTitle[] }) {
   if (items.length === 0) return null;
   return (
-    <section className="media-spotlight content-section" aria-label={`Popular BL ${type === 'ANIME' ? 'Anime' : 'Manga'} titles`}>
+    <section className="media-spotlight content-section" aria-label={`Popular BL ${type === 'ANIME' ? 'Anime' : 'Comic'} titles`}>
       <div className="section-heading"><div><div className="eyebrow">ANILIST · STRICTLY BL</div><h2>{headingFor(type)} to explore</h2></div><Link className="text-link" to={browsePath(type)}>See all <ArrowUpRight size={13} /></Link></div>
       <div className="media-spotlight-rail">{items.slice(0, 10).map((item) => <MediaCard item={item} key={item.id} />)}</div>
     </section>
@@ -77,7 +77,7 @@ export function MediaCategoryCards({ liveActionCount }: { liveActionCount?: numb
   return (
     <section
       className="media-category-section"
-      aria-label="Browse Live-Action Series, Anime and Manga"
+      aria-label="Browse Live-Action Series, Anime and Comic"
       style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}
     >
       <Link className="media-category-card" to="/discover">
@@ -96,12 +96,12 @@ export function MediaCategoryCards({ liveActionCount }: { liveActionCount?: numb
         <p>Browse strictly Boys’ Love anime with YouTube, Crunchyroll, Bilibili &amp; multi-platform episode redirects.</p>
         <span className="media-category-link">Explore anime <ArrowUpRight size={15} /></span>
       </Link>
-      <Link className="media-category-card media-category-manga" to="/manga">
+      <Link className="media-category-card media-category-manga" to="/comic">
         <span className="media-category-icon"><BookOpen size={21} /></span>
         <span className="eyebrow">ANILIST · LIVE BROWSING</span>
-        <h2>BL Manga</h2>
-        <p>Find strictly BL manga, manhwa, manhua &amp; light novels with platform and chapter selection.</p>
-        <span className="media-category-link">Explore manga <ArrowUpRight size={15} /></span>
+        <h2>BL Comic</h2>
+        <p>Find strictly BL manga, manhwa, manhua &amp; webtoons with platform and chapter selection.</p>
+        <span className="media-category-link">Explore comic <ArrowUpRight size={15} /></span>
       </Link>
     </section>
   );

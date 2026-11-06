@@ -20,7 +20,7 @@ const MARK_URL = '/assets/aistudio/blpulse-mark_2739ad76.png';
 export interface UnifiedRecommendation {
   key: string;
   title: string;
-  category: 'Live Action' | 'Anime' | 'Manga';
+  category: 'Live Action' | 'Anime' | 'Comic';
   subtitle: string;
   coverUrl?: string | null;
   path: string;
@@ -239,10 +239,10 @@ export function Header({
       return {
         key: `${item.type}-${item.id}`,
         title: item.displayTitle,
-        category: item.type === 'ANIME' ? ('Anime' as const) : ('Manga' as const),
+        category: item.type === 'ANIME' ? ('Anime' as const) : ('Comic' as const),
         subtitle: [item.format, item.startYear, item.status?.replaceAll('_', ' ')].filter(Boolean).join(' · '),
         coverUrl: item.coverImage,
-        path: `/${item.type === 'ANIME' ? 'anime' : 'manga'}/${item.id}${qs ? `?${qs}` : ''}`,
+        path: `/${item.type === 'ANIME' ? 'anime' : 'comic'}/${item.id}${qs ? `?${qs}` : ''}`,
       };
     });
 
@@ -282,7 +282,7 @@ export function Header({
         <nav className="primary-nav" aria-label="Main navigation">
           <NavLink to="/discover" end className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Live action</NavLink>
           <NavLink to="/anime" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Anime</NavLink>
-          <NavLink to="/manga" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Manga</NavLink>
+          <NavLink to="/comic" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Comic</NavLink>
         </nav>
         <div className="topbar-actions">
           <form
@@ -294,14 +294,14 @@ export function Header({
           >
             <Search size={16} aria-hidden="true" />
             <input
-              aria-label="Search all BL series, anime, and manga"
+              aria-label="Search all BL series, anime, and comics"
               value={query}
               onFocus={() => setOpenDropdown(true)}
               onChange={(event) => {
                 setQuery(event.target.value);
                 setOpenDropdown(true);
               }}
-              placeholder="Search BL series, anime & manga…"
+              placeholder="Search BL series, anime & comics…"
             />
             {query && (
               <button
@@ -319,7 +319,7 @@ export function Header({
             {openDropdown && query.trim().length > 0 && (
               <div
                 role="listbox"
-                aria-label="Search recommendations across Live Action, Anime, and Manga"
+                aria-label="Search recommendations across Live Action, Anime, and Comic"
                 style={{
                   position: 'absolute',
                   top: 'calc(100% + 8px)',
