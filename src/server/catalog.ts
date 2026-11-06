@@ -22,7 +22,6 @@ import {
   writeMeta,
 } from './db.js';
 import { buildEditorial } from './editorial.js';
-import { fetchTmdbCatalog, fetchTmdbWatchProviders, isTmdbConfigured } from './tmdb.js';
 
 function cleanTitleForSearch(title: string): string {
   return title
@@ -3468,16 +3467,6 @@ export async function hydrateCatalog(): Promise<void> {
     return;
   }
 
-  if (isTmdbConfigured()) {
-    try {
-      await refreshCatalog();
-      void enrichMissingPostersFromTvMaze();
-      return;
-    } catch {
-      // Fallback to verified BL catalog
-    }
-  }
-
   memorySeries = [...VERIFIED_BL_SERIES_CATALOG];
   lastRefreshed = new Date().toISOString();
   lastChecked = lastRefreshed;
@@ -3513,43 +3502,6 @@ export async function refreshCatalog(): Promise<Series[]> {
   lastChecked = new Date().toISOString();
 
   try {
-    if (isTmdbConfigured()) {
-      const tmdbList = await fetchTmdbCatalog();
-      if (tmdbList.length > 0) {
-        const byId = new Map<string, Series>();
-        for (const item of memorySeries) {
-          byId.set(item.id, item);
-        }
-        for (const tmdbItem of tmdbList) {
-          const existing = byId.get(tmdbItem.id);
-          if (existing) {
-            byId.set(tmdbItem.id, {
-              ...existing,
-              coverUrl: tmdbItem.coverUrl ?? existing.coverUrl,
-              platforms: ensureMultiPlatforms([...existing.platforms, ...tmdbItem.platforms], existing.title),
-            });
-          } else {
-            const multi = ensureMultiPlatforms(tmdbItem.platforms, tmdbItem.title);
-            byId.set(tmdbItem.id, {
-              ...tmdbItem,
-              episodes: tmdbItem.episodes ?? 12,
-              platforms: multi,
-              episodeLinks: buildEpisodeLinks(tmdbItem.episodes ?? 12, multi, tmdbItem.title),
-            });
-          }
-        }
-        memorySeries = Array.from(byId.values());
-        lastRefreshed = new Date().toISOString();
-        sourceOnline = true;
-        editorial = await buildEditorial(memorySeries);
-        await saveSeries(memorySeries, true);
-        await writeMeta('last_refreshed', lastRefreshed);
-        await writeMeta('editorial_post', JSON.stringify(editorial));
-        void enrichMissingPostersFromTvMaze();
-        return memorySeries;
-      }
-    }
-
     lastRefreshed = new Date().toISOString();
     sourceOnline = true;
     editorial = await buildEditorial(memorySeries);
@@ -3578,24 +3530,6 @@ export async function getSeriesById(id: string): Promise<Series | undefined> {
       }
     } catch {
       // Ignore error
-    }
-  }
-
-  if (isTmdbConfigured() && id.startsWith('tmdb-')) {
-    const numericId = Number(id.replace('tmdb-', ''));
-    if (Number.isFinite(numericId) && numericId > 0) {
-      const providers = await fetchTmdbWatchProviders(numericId, existing.title);
-      if (providers.length > 0) {
-        const combined = ensureMultiPlatforms([...existing.platforms, ...providers], existing.title);
-        const updated: Series = {
-          ...existing,
-          platforms: combined,
-          episodeLinks: buildEpisodeLinks(existing.episodes ?? 12, combined, existing.title),
-          detailFetchedAt: new Date().toISOString(),
-        };
-        memorySeries = memorySeries.map((s) => (s.id === id ? updated : s));
-        return updated;
-      }
     }
   }
 
@@ -4141,37 +4075,6 @@ export async function runMarketAutoSync(): Promise<MarketSyncResult> {
   }
 
   const candidateList: RawBlSeries[] = [...CURATED_MARKET_SYNC_DRAMAS];
-
-  // If TMDB is configured, also pull newly listed BL live-action dramas from TMDB
-  if (isTmdbConfigured()) {
-    try {
-      const tmdbItems = await fetchTmdbCatalog();
-      if (tmdbItems.length > 0) {
-        sourceUsed = 'TMDB Live Discovery + Verified Market Feed + TVMaze';
-        for (const tmdb of tmdbItems.slice(0, 12)) {
-          if (!existingByTitle.has(tmdb.title.toLowerCase().trim())) {
-            const discoveredPfs = await discoverOfficialPlatformsFromWeb(tmdb.title);
-            candidateList.push({
-              id: tmdb.id,
-              title: tmdb.title,
-              country: tmdb.country,
-              status: tmdb.status,
-              sourceUrl: tmdb.sourceUrl,
-              coverUrl: tmdb.coverUrl,
-              synopsis: tmdb.synopsis || `${tmdb.title} is a ${tmdb.country} Boys’ Love series.`,
-              year: tmdb.year ?? 2025,
-              releaseDate: tmdb.releaseDate ?? '2025-01-01',
-              episodes: tmdb.episodes ?? 12,
-              genres: tmdb.genres,
-              platforms: discoveredPfs,
-            });
-          }
-        }
-      }
-    } catch {
-      // Ignore TMDB discovery errors
-    }
-  }
 
   for (const raw of candidateList) {
     const key = raw.title.toLowerCase().trim();

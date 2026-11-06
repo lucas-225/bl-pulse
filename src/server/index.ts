@@ -17,7 +17,6 @@ import type { MonetizationConfig, Series } from '../shared/types.js';
 import { browseAniList, getAniListMedia } from './anilist.js';
 import {
   autoFillSeriesMetadata,
-  catalogIsStale,
   getCatalogSnapshot,
   getMonetizationConfig,
   getSeriesById,
@@ -37,7 +36,6 @@ import {
   resolvePlatformRedirect,
 } from './redirect.js';
 import { configuredPublicOrigin, renderRobots, renderSeoDocument, renderSitemap } from './seo.js';
-import { isTmdbConfigured } from './tmdb.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const isProduction = process.env.NODE_ENV === 'production';
@@ -143,23 +141,13 @@ async function start() {
   void (async () => {
     await initDatabase();
     await Promise.all([hydrateCatalog(), hydrateAnalytics()]);
-    if (isTmdbConfigured() && (getCatalogSnapshot().series.length === 0 || catalogIsStale())) {
-      void refreshCatalog();
-    }
   })();
-
-  setInterval(() => {
-    if (isTmdbConfigured() && catalogIsStale()) {
-      void refreshCatalog();
-    }
-  }, 60 * 60 * 1000).unref();
 
   app.get('/api/health', (_req, res) => {
     const snapshot = getCatalogSnapshot();
     res.json({
       ok: true,
       databaseReady: isDatabaseReady(),
-      tmdbConfigured: isTmdbConfigured(),
       anilistConfigured: true,
       seriesCount: snapshot.series.length,
       lastRefreshed: snapshot.lastRefreshed,

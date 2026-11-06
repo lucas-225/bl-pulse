@@ -497,7 +497,7 @@ function DiscoverPage({ catalog, loading }: { catalog: CatalogResponse; loading:
       <div className="results-line"><div><strong>{filtered.length.toLocaleString()}</strong> live-action series<span> · </span><span>{status === 'all' ? 'All statuses' : status === 'airing' ? 'Airing now' : status === 'upcoming' ? 'Coming soon' : 'Completed'}</span></div><button className="clear-filters" onClick={clearFilters}>Clear filters</button></div>
       <AdBanner placement="infeed" monetization={catalog.monetization} />
       {loading && catalog.sourceOnline && catalog.series.length === 0 ? <LoadingState label="Loading the source catalog" /> : filtered.length > 0 ? <div className="discover-grid">{filtered.map((item) => <SeriesCard key={item.id} series={item} />)}</div> : !catalog.sourceOnline && catalog.series.length === 0 ? <EmptyState /> : <div className="empty-results"><div className="empty-mark"><Filter size={21} /></div><h2>No series match these filters.</h2><p>Try another title, country, platform, or category.</p><button className="button button-secondary" onClick={clearFilters}>Reset discovery filters</button></div>}
-      {!catalog.sourceOnline && catalog.series.length > 0 && <div className="stale-banner"><Radio size={16} /><span>The live-action source is offline. Showing only the last saved TMDB catalog snapshot.</span></div>}
+      {!catalog.sourceOnline && catalog.series.length > 0 && <div className="stale-banner"><Radio size={16} /><span>Showing the cached self-hosted live-action catalog snapshot.</span></div>}
     </div>
   );
 }
@@ -791,7 +791,7 @@ function LoadingState({ label }: { label: string }) {
 }
 
 function EmptyState() {
-  return <div className="empty-results empty-catalog"><div className="empty-mark"><Radio size={22} /></div><h2>Live-action is waiting on its source.</h2><p>Connect the licensed TMDB data source to populate this section. Anime and Manga are already browsable from AniList.</p><div className="empty-actions"><Link className="button button-secondary" to="/anime">Browse BL Anime</Link><Link className="button button-secondary" to="/manga">Browse BL Manga</Link></div></div>;
+  return <div className="empty-results empty-catalog"><div className="empty-mark"><Radio size={22} /></div><h2>Live-action catalog is empty.</h2><p>Use the Admin Auto Sync engine to populate your self-hosted database. Anime and Comic are already browsable from AniList.</p><div className="empty-actions"><Link className="button button-secondary" to="/anime">Browse BL Anime</Link><Link className="button button-secondary" to="/comic">Browse BL Comic</Link></div></div>;
 }
 
 function NotFound() {
