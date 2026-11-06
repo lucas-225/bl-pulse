@@ -53,9 +53,9 @@ async function searchWebForUrls(query: string, domainRegex: RegExp): Promise<str
   }
 }
 
-function parseYouTubeCandidates(html: string): Array<{ id: string; videoTitle: string }> {
+function parseYouTubeCandidates(html: string): Array<{ id: string; videoTitle: string; durationSecs: number }> {
   const chunks = html.split('"videoRenderer":{"videoId":"').slice(1);
-  const candidates: Array<{ id: string; videoTitle: string }> = [];
+  const candidates: Array<{ id: string; videoTitle: string; durationSecs: number }> = [];
   const seen = new Set<string>();
 
   for (const chunk of chunks) {
@@ -63,18 +63,35 @@ function parseYouTubeCandidates(html: string): Array<{ id: string; videoTitle: s
     if (!/^[a-zA-Z0-9_-]{11}$/.test(id) || seen.has(id)) continue;
     seen.add(id);
 
-    const windowText = chunk.slice(0, 1600);
+    const windowText = chunk.slice(0, 3500);
     const runsMatch = windowText.match(/"title":\{"runs":\[\{"text":"((?:\\.|[^"\\])*)"/);
     const simpleMatch = windowText.match(/"title":\{[^{}]*"simpleText":"((?:\\.|[^"\\])*)"/);
     const rawTitle = runsMatch?.[1] ?? simpleMatch?.[1] ?? '';
     const videoTitle = rawTitle.replace(/\\"/g, '"').replace(/\\u0026/g, '&');
-    candidates.push({ id, videoTitle });
+
+    const lenMatch = windowText.match(/"lengthText":\{"accessibility":\{[^{}]*\{[^{}]*\}[^{}]*\},"simpleText":"([0-9:]+)"/);
+    const lenStr = lenMatch?.[1] ?? '';
+    const parts = lenStr ? lenStr.split(':').map(Number) : [];
+    const durationSecs =
+      parts.length === 3
+        ? parts[0] * 3600 + parts[1] * 60 + parts[2]
+        : parts.length === 2
+          ? parts[0] * 60 + parts[1]
+          : 0;
+
+    candidates.push({ id, videoTitle, durationSecs });
     if (candidates.length >= 16) break;
   }
   return candidates;
 }
 
-async function resolveYouTubeEpisodeUrl(title: string, season: number, episode: number, kind: string): Promise<string> {
+async function resolveYouTubeEpisodeUrl(
+  title: string,
+  season: number,
+  episode: number,
+  kind: string,
+  cleanBaseUrl?: string,
+): Promise<string> {
   const seasonPart = season > 1 ? ` Season ${season}` : '';
   // For live-action series (GMMTV, Mandee, Wabi Sabi, IdolFactory, etc.), query EP.X [1/4] Eng Sub first so 4-part uploads resolve directly to Part [1/4]
   const primaryQuery =
@@ -99,25 +116,30 @@ async function resolveYouTubeEpisodeUrl(title: string, season: number, episode: 
         const titleWords = title
           .toLowerCase()
           .split(/[^a-z0-9]+/)
-          .filter((w) => w.length >= 3);
+          .filter((w) => w.length >= 3 && !['the', 'and', 'for', 'with'].includes(w));
 
         const epExactRegex = new RegExp(`(?:ep(?:isode)?\\.?\\s*0*${episode}\\b|#0*${episode}\\b|\\b0*${episode}\\b)`, 'i');
         const part1Regex = /\[\s*1\s*\/\s*4\s*\]|\bpart\s*1\b|\b1\/4\b/i;
         const otherPartRegex = /\[\s*[234]\s*\/\s*4\s*\]|\b[234]\/4\b/i;
+        const noiseRegex = /\b(?:trailer|teaser|reaction|react|ost|mv|shorts|amv|edit|review|explained|abridged|fanmade|animatic|cosplay|tiktok|gacha)\b/i;
 
-        let best = candidates[0];
+        let best: { id: string; videoTitle: string; durationSecs: number } | null = null;
         let bestScore = -999;
 
         for (let idx = 0; idx < candidates.length; idx++) {
           const c = candidates[idx];
           const vt = c.videoTitle.toLowerCase();
+
+          // Skip ultra-short clips (< 90s) when duration is known
+          if (c.durationSecs > 0 && c.durationSecs < 90) continue;
+
           let score = 20 - idx; // Prefer higher-ranked YouTube results
 
           const matchedWords = titleWords.filter((w) => vt.includes(w)).length;
           if (titleWords.length > 0 && matchedWords > 0) {
             score += matchedWords * 15;
           } else if (titleWords.length > 0) {
-            score -= 20;
+            score -= 25;
           }
 
           if (epExactRegex.test(vt)) {
@@ -129,8 +151,11 @@ async function resolveYouTubeEpisodeUrl(title: string, season: number, episode: 
           if (otherPartRegex.test(vt)) {
             score -= 40; // Never pick [2/4], [3/4], or [4/4] over [1/4]
           }
-          if (/\b(?:trailer|teaser|reaction|ost|mv|shorts)\b/i.test(vt)) {
-            score -= 25;
+          if (noiseRegex.test(vt)) {
+            score -= 60;
+          }
+          if (c.durationSecs >= 480) {
+            score += 15; // Boost full-length episodes/movies
           }
 
           if (score > bestScore) {
@@ -139,21 +164,28 @@ async function resolveYouTubeEpisodeUrl(title: string, season: number, episode: 
           }
         }
 
-        return `https://www.youtube.com/watch?v=${best.id}`;
+        if (best && bestScore >= 15) {
+          return `https://www.youtube.com/watch?v=${best.id}`;
+        }
       }
     }
   } catch {
-    // Ignore and try Yahoo fallback for YouTube watch link
+    // Ignore and try fallbacks
   }
 
-  // Fallback: resolve direct YouTube watch?v= link via web index so we still open a playing video instead of the search bar
+  // If we have a verified direct YouTube watch or playlist URL (e.g., full-season compilation or official playlist), return it directly
+  if (cleanBaseUrl && /youtube\.com\/(?:watch\?v=|playlist\?list=)/i.test(cleanBaseUrl)) {
+    return cleanBaseUrl;
+  }
+
+  // Fallback: resolve direct YouTube watch?v= link via web index
   const webYt = await searchWebForUrls(
-    `site:youtube.com/watch "${title}" "EP.${episode}"`,
+    `site:youtube.com/watch "${title}" "Episode ${episode}"`,
     /youtube\.com\/watch\?v=[a-zA-Z0-9_-]{11}/i,
   );
   if (webYt[0]) return webYt[0];
 
-  return searchUrl;
+  return cleanBaseUrl ?? searchUrl;
 }
 
 async function resolveMangaDexChapterUrl(
@@ -263,10 +295,10 @@ export async function resolvePlatformRedirect(params: {
 
   // 1. YouTube
   if (platformLower.includes('youtube')) {
-    if (episode === 1 && season === 1 && cleanBaseUrl && /youtube\.com\/watch\?v=/i.test(cleanBaseUrl)) {
+    if (episode === 1 && season === 1 && cleanBaseUrl && /youtube\.com\/(?:watch\?v=|playlist\?list=)/i.test(cleanBaseUrl)) {
       resolvedUrl = cleanBaseUrl;
     } else {
-      resolvedUrl = await resolveYouTubeEpisodeUrl(effectiveTitle, season, episode, kind);
+      resolvedUrl = await resolveYouTubeEpisodeUrl(effectiveTitle, season, episode, kind, cleanBaseUrl);
     }
   }
   // 2. MangaDex

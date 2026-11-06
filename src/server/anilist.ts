@@ -161,44 +161,173 @@ const DETAIL_QUERY = `
   }
 `;
 
-// Strictly verified BL anime that genuinely have full episodes or movies available on YouTube (direct watch URLs)
+// Strictly verified BL anime (by exact AniList ID) that genuinely stream full episodes, OVAs, ONAs, or movies on YouTube
 const VERIFIED_YOUTUBE_ANIME_URLS: Record<number, string> = {
-  126288: 'https://www.youtube.com/watch?v=iENQpq6__PQ', // Sasaki and Miyano
-  101972: 'https://www.youtube.com/watch?v=OLxdLlNPMyo', // Mo Dao Zu Shi / The Founder of Diabolism S1 (Tencent Video)
-  104458: 'https://www.youtube.com/watch?v=1a04FyRdSgo', // The Founder of Diabolism S2 (Tencent Video)
-  121467: 'https://www.youtube.com/watch?v=1a04FyRdSgo', // The Founder of Diabolism Final Season (Tencent Video)
-  3092: 'https://www.youtube.com/watch?v=OGYx-oK4rs4',   // Junjo Romantica S1
-  13767: 'https://www.youtube.com/watch?v=tJnvKGSuZtw',  // Junjo Romantica OVA
-  111305: 'https://www.youtube.com/watch?v=kBr9TdLxX0w', // Sekaiichi Hatsukoi: Propose-hen
-  243: 'https://www.youtube.com/watch?v=x1_TDNby62U',    // Gravitation (Nozomi Entertainment)
-  11135: 'https://www.youtube.com/watch?v=ZKx0dJUVzNE',  // Hybrid Child OVA
-  12695: 'https://www.youtube.com/watch?v=zrlx4KA4rFk',  // Tight-rope OVA
-  3375: 'https://www.youtube.com/watch?v=W6KBTxAz7mc',   // Kirepapa. OVA
-  719: 'https://www.youtube.com/watch?v=eLlZAb_85ME',    // Ai no Kusabi
-  5784: 'https://www.youtube.com/watch?v=eLlZAb_85ME',   // Ai no Kusabi (2012)
-  21096: 'https://www.youtube.com/watch?v=vrcua2WDwTg',  // Doukyuusei -Classmates-
-  15933: 'https://www.youtube.com/watch?v=Ci5bfzWqc5s',  // Vassalord. OVA
+  21709: 'https://www.youtube.com/watch?v=8FlQecyv0ek',  // Yuri!!! on ICE (Full Episodes 1-12)
+  108430: 'https://www.youtube.com/watch?v=YH2KpQcMOuA', // given
+  111734: 'https://www.youtube.com/watch?v=YH2KpQcMOuA', // Given The Movie
   134710: 'https://www.youtube.com/watch?v=MaRgBdKKmrM', // given: on the other hand OVA
-  114300: 'https://www.youtube.com/watch?v=zhBUZcjKpEM', // Legend of Exorcism (Bilibili Official)
-  116016: 'https://www.youtube.com/watch?v=jgd0X6j14KM', // Thousand Autumns (Tencent Official)
-  125084: 'https://www.youtube.com/watch?v=fvCB2bCSQr4', // Scumbag System (Tencent Official)
-  109039: 'https://www.youtube.com/watch?v=fvCB2bCSQr4', // Scumbag System (Tencent Official)
-  104212: 'https://www.youtube.com/watch?v=HJRn4bXvTII', // Antidote / Jie Yao (Bilibili Official)
+  175199: 'https://www.youtube.com/watch?v=YH2KpQcMOuA', // given The Movie: To the Sea
+  126288: 'https://www.youtube.com/watch?v=iENQpq6__PQ', // Sasaki and Miyano
+  143082: 'https://www.youtube.com/watch?v=iENQpq6__PQ', // Sasaki and Miyano: A Tiny Episode From Before He Realized His Feelings
+  146743: 'https://www.youtube.com/watch?v=HXcEt2xC6FA', // Sasaki and Miyano: Graduation
+  21096: 'https://www.youtube.com/watch?v=vrcua2WDwTg',  // Doukyuusei -Classmates- (Full Movie)
+  113260: 'https://www.youtube.com/watch?v=ddbi3UQW73U', // Heaven Official's Blessing (Tian Guan Ci Fu)
+  126356: 'https://www.youtube.com/watch?v=ddbi3UQW73U', // Heaven Official's Blessing Special Episode
+  127976: 'https://www.youtube.com/watch?v=XEQgRcYTmeA', // Heaven Official's Blessing Season 2
+  101972: 'https://www.youtube.com/watch?v=1a04FyRdSgo', // Mo Dao Zu Shi / The Founder of Diabolism S1 (Tencent Video Official)
+  104458: 'https://www.youtube.com/watch?v=1a04FyRdSgo', // The Founder of Diabolism 2 (Tencent Video Official)
+  121467: 'https://www.youtube.com/watch?v=1a04FyRdSgo', // The Founder of Diabolism: Final Season (Tencent Video Official)
+  108978: 'https://www.youtube.com/watch?v=fvCB2bCSQr4', // Scumbag System / Chuan Shu Zijiu Zhinan (Tencent Video Official)
+  120213: 'https://www.youtube.com/watch?v=jgd0X6j14KM', // Thousand Autumns / Shanhe Jian Xin (Tencent Video Official EP01-16)
+  116182: 'https://www.youtube.com/watch?v=hRUbuwKaSJc', // Legend of Exorcism / Tianbao Fuyao Lu (Bilibili Official Full Episodes)
+  126366: 'https://www.youtube.com/watch?v=TW3ePyzhQac', // Epic of Divinity Light / Dinghai Fusheng Lu (Bilibili Official All Episodes)
+  10161: 'https://www.youtube.com/watch?v=Uipgs8qP2XQ',  // No. 6
+  20520: 'https://www.youtube.com/watch?v=XFvkPu0MEA4',  // LOVE STAGE!!
+  20960: 'https://www.youtube.com/watch?v=XFvkPu0MEA4',  // LOVE STAGE!!: Chotto ja Nakutte OVA
+  87494: 'https://www.youtube.com/watch?v=6VGqe9YforU',  // Hitorijime My Hero
+  3092: 'https://www.youtube.com/watch?v=OGYx-oK4rs4',   // Junjo Romantica
+  4814: 'https://www.youtube.com/watch?v=tJnvKGSuZtw',   // Junjo Romantica 2
+  20796: 'https://www.youtube.com/watch?v=SrQMzxYDFio',  // Junjou Romantica 3
+  13767: 'https://www.youtube.com/watch?v=tJnvKGSuZtw',  // Junjou Romantica OVA
+  9926: 'https://www.youtube.com/watch?v=kBr9TdLxX0w',   // Sekai Ichi Hatsukoi - The World's Greatest First Love
+  11123: 'https://www.youtube.com/watch?v=kBr9TdLxX0w',  // Sekai Ichi Hatsukoi 2
+  20371: 'https://www.youtube.com/watch?v=kBr9TdLxX0w',  // Sekai Ichi Hatsukoi: Yokozawa Takafumi no Baai
+  8063: 'https://www.youtube.com/watch?v=kBr9TdLxX0w',   // Sekaiichi Hatsukoi OVA
+  20684: 'https://www.youtube.com/watch?v=kBr9TdLxX0w',  // Sekaiichi Hatsukoi: Valentine-hen
+  111305: 'https://www.youtube.com/watch?v=kBr9TdLxX0w', // Sekaiichi Hatsukoi: Propose-hen
+  167087: 'https://www.youtube.com/watch?v=o1u3niikZKo', // Cherry Magic! Thirty Years of Virginity Can Make You a Wizard?!
+  166700: 'https://www.youtube.com/playlist?list=PLxSscENEp7JhJvAQ5lW4naMb67Rlv3J1j', // Twilight Out of Focus (Ani-One Official Playlist)
+  21177: 'https://www.youtube.com/playlist?list=PLxSscENEp7JglWiR0yhW9tGY-dt5XVAqX',  // SUPER LOVERS (Ani-One Official Playlist)
+  21836: 'https://www.youtube.com/playlist?list=PLxSscENEp7JhyjmWrOjshiPzt2wIkDJ2t',  // SUPER LOVERS 2 (Ani-One Official Playlist)
+  183127: 'https://www.youtube.com/watch?v=xVF41MtAmr8', // Let's Go Karaoke! (Karaoke Iko!)
+  20677: 'https://www.youtube.com/watch?v=tZNq6SK82b4',  // DRAMAtical Murder
+  21011: 'https://www.youtube.com/watch?v=tZNq6SK82b4',  // DRAMAtical Murder OVA: Data_xx_Transitory
+  130591: 'https://www.youtube.com/watch?v=E0pstfl0MMM', // Sabikui Bisco (Muse Asia Official)
+  103303: 'https://www.youtube.com/watch?v=DiwKqV4j6os', // Sparks of Tomorrow
+  5525: 'https://www.youtube.com/watch?v=FqToRGCbNJo',   // 07-Ghost
+  3655: 'https://www.youtube.com/watch?v=VlBl9s92R9A',   // Nabari no Ou
+  101374: 'https://www.youtube.com/watch?v=M6tVHsjJA-k', // Yarichin☆Bitch-bu
+  98031: 'https://www.youtube.com/watch?v=UvqkF3x44kc',  // Spiritpact (Ling Qi)
+  100813: 'https://www.youtube.com/watch?v=FB8NETZdC6g', // Spiritpact -Bond of The Underworld-
+  243: 'https://www.youtube.com/watch?v=x1_TDNby62U',    // Gravitation (Nozomi Entertainment)
+  507: 'https://www.youtube.com/watch?v=Kp2nJaD8TWo',    // Gravitation: Lyrics of Love OVA
+  21782: 'https://www.youtube.com/watch?v=r7swEZR-RA0',  // The Highschool Life of a Fudanshi
+  103000: 'https://www.youtube.com/watch?v=zPGq99wMVFI', // Jingai-san no Yome
+  21837: 'https://www.youtube.com/watch?v=7USUlg9OaBs',  // Gakuen Handsome
+  21392: 'https://www.youtube.com/watch?v=yuOotAUSAIM',  // Gakuen Handsome The Animation
+  531: 'https://www.youtube.com/watch?v=mq9bKHDWZSo',    // Sailor Moon R: The Movie (Official YouTube Movie)
+  18465: 'https://www.youtube.com/watch?v=vsqL9NgjRWo',  // Genshiken Second Generation
+  11135: 'https://www.youtube.com/watch?v=5jUvcfCTDLQ',  // Hybrid Child OVA
+  907: 'https://www.youtube.com/watch?v=cY7YmN-NpVo',    // Princess Princess
+  8634: 'https://www.youtube.com/watch?v=FzEm0wxqiKw',   // Koi Suru Boukun (The Tyrant Falls in Love) OVA
+  135584: 'https://www.youtube.com/watch?v=EyMT3rj8SMw', // Mignon
+  109412: 'https://www.youtube.com/watch?v=wEH9ylNS16w', // Hyperventilation
+  184815: 'https://www.youtube.com/watch?v=wEH9ylNS16w', // Hyperventilation Special
+  12695: 'https://www.youtube.com/watch?v=zrlx4KA4rFk',  // Tight-rope OVA
+  553: 'https://www.youtube.com/watch?v=kI3eZge9ATo',    // Descendants of Darkness (Yami no Matsuei)
+  5774: 'https://www.youtube.com/watch?v=hNgt1zNDO50',   // Hey, Class President! (Seitokaichou ni Chuukoku) OVA
+  15933: 'https://www.youtube.com/watch?v=x48drkte3wI',  // Vassalord. OVA
+  104080: 'https://www.youtube.com/watch?v=5_eqP15scOg', // Look, I Can See Your Ears! (Bilibili Official)
+  107984: 'https://www.youtube.com/watch?v=BaiPymJF5FM', // Look, I Can See Your Ears! S2 (Bilibili Official)
+  719: 'https://www.youtube.com/watch?v=HZCnBpM7UNs',    // Ai no Kusabi
+  5784: 'https://www.youtube.com/watch?v=5RZtvWiVi3E',   // Ai no Kusabi (2012)
+  3375: 'https://www.youtube.com/watch?v=CAGwQF0G8SM',   // Kirepapa. OVA
+  1532: 'https://www.youtube.com/watch?v=TcnWBQw1SyM',   // Sukisho
+  746: 'https://www.youtube.com/watch?v=MCt33fyeuAA',    // Papa to Kiss in the Dark OVA
+  132821: 'https://www.youtube.com/watch?v=X9QMvlwcTEc', // Semantic Error Special
+  1961: 'https://www.youtube.com/watch?v=Wri-mwxRGUc',   // One Stormy Night (Arashi no Yoru ni)
+  106165: 'https://www.youtube.com/watch?v=EK1C0vb0SLU', // Even a Dad Still Wants It... (Papa Datte, Shitai)
+  11355: 'https://www.youtube.com/watch?v=Uvrc08UwKc0',  // This Boy Can Fight Aliens!
+  15439: 'https://www.youtube.com/watch?v=ZjvGT27S2w0',  // This Boy Caught a Merman
+  1637: 'https://www.youtube.com/watch?v=-gMcBHYiSpI',   // The Poem of Wind and Trees (Kaze to Ki no Uta)
+  3210: 'https://www.youtube.com/watch?v=HcMfHBIgkJQ',   // Ikoku Irokoi Romantan OVA
+  4080: 'https://www.youtube.com/watch?v=Osga0vPXNqI',   // Kyo Kara Maoh! Season 3
+  2971: 'https://www.youtube.com/watch?v=Kqjr4rEw4R4',   // Kyo Kara Maoh R
+  103888: 'https://www.youtube.com/watch?v=G26nYZljB8E', // Caramel Honey
+  621: 'https://www.youtube.com/watch?v=JkyCXEeiiDA',    // Nightwalker: The Midnight Detective
+  2148: 'https://www.youtube.com/watch?v=IehLfePFib8',   // No Money! (Okane ga Nai) OVA
+  129046: 'https://www.youtube.com/watch?v=h2N7OfAO_zU', // 6 LOVERS
+  5902: 'https://www.youtube.com/watch?v=k6R0C0YgzOg',   // Maiden Rose (Hyakujitsu no Bara) OVA
+  5719: 'https://www.youtube.com/watch?v=nLDgcN-Smok',   // SEX PISTOLS OVA
+  2835: 'https://www.youtube.com/watch?v=cmGQhAf0NqA',   // Patalliro!
+  1035: 'https://www.youtube.com/watch?v=eWbFe34_fpc',   // Patalliro Saiyuki!
+  205068: 'https://www.youtube.com/watch?v=HJf9EbFYVXU', // One-Room TA (All Episodes)
+  129973: 'https://www.youtube.com/watch?v=05bkyd_wYf4', // Everything for Demon King Evelogia
+  365: 'https://www.youtube.com/watch?v=hZtQo4F5uFs',    // FAKE OVA
+  187362: 'https://www.youtube.com/watch?v=Oo5n2ErFmYM', // Tamaranai no wa Koi nano ka
+  1019: 'https://www.youtube.com/watch?v=L6l7uus3Ano',   // Mirage of Blaze
+  1020: 'https://www.youtube.com/watch?v=L6l7uus3Ano',   // Mirage of Blaze: Rebels of the River Edge OVA
+  747: 'https://www.youtube.com/watch?v=iwq-VAj82t0',    // Embracing Love: Cherished Spring (Haru wo Daiteita) OVA
+  2238: 'https://www.youtube.com/watch?v=iwq-VAj82t0',   // Embracing Love: A Cicada in Winter (Fuyu no Semi) OVA
+  201961: 'https://www.youtube.com/watch?v=jw9dRj4eces', // Quiet Please!
+  98081: 'https://www.youtube.com/watch?v=JdO33JZqviQ',  // Otokonoko ♂ Delivery
+  185261: 'https://www.youtube.com/watch?v=DnrPZtIF79U', // Neko ni Naritai Tamagawa-kun
+  213666: 'https://www.youtube.com/watch?v=lJIiCnJfDOw', // Perfect Addiction
+  7110: 'https://www.youtube.com/watch?v=RWYOF2AuN9o',   // Shounen Maid Kuro-kun: Tenshi no Uta OVA
+  212563: 'https://www.youtube.com/watch?v=pD3jhTYmsME', // Isekai Office Worker OVA
+  12137: 'https://www.youtube.com/watch?v=d9xAlU4BZwM',  // Robotica * Robotics
+  1041: 'https://www.youtube.com/watch?v=u2rb7_FYZJE',   // Zetsuai 1989 OVA
+  1042: 'https://www.youtube.com/watch?v=S1qKwgOvN7I',   // BRONZE: ZETSUAI since 1989 OVA
+  199446: 'https://www.youtube.com/watch?v=Tlg_4jb2w44', // I'll Live a Long Life to Dote on My Favorite Stepbrother!
+  20568: 'https://www.youtube.com/watch?v=dEmiKKBK_Uw',  // Angel's Feather
+  2592: 'https://www.youtube.com/watch?v=bB2uPeXxmTg',   // Kimera OVA
+  177678: 'https://www.youtube.com/watch?v=8ORXhm3Bm6g', // Unexpectedly Naughty Fukami
+  2220: 'https://www.youtube.com/watch?v=gj6gskwU55c',   // BE-BOY KIDNAPP'N IDOL OVA
+  8339: 'https://www.youtube.com/watch?v=eRzh5c8F4YQ',   // Kachou no Koi OVA
+  724: 'https://www.youtube.com/watch?v=_f9IG_lJ7tw',    // Enzai OVA
+  1912: 'https://www.youtube.com/watch?v=OFCRvLicUr4',   // Marginal Prince
+  1908: 'https://www.youtube.com/watch?v=8Mttu-2Cmkw',   // LESSON XX OVA
+  173240: 'https://www.youtube.com/watch?v=m0ja93h_8s4', // The Perfect Prince Loves Me, the Side Character?!
+  168632: 'https://www.youtube.com/watch?v=paUWu0cnUIs', // The Dangerous Convenience Store
+  97920: 'https://www.youtube.com/watch?v=DUHzggKBT8k',  // Koisuru Shirokuma
+  733: 'https://www.youtube.com/watch?v=6EJEcshRXXg',    // KIZUNA OVA
+  734: 'https://www.youtube.com/watch?v=ff5NL-CxOmk',    // Kizuna: Much Ado About Nothing OVA
+  136796: 'https://www.youtube.com/watch?v=lDXmqREmQoo', // Caressing the Nipples of My Hibernating Bear
+  110211: 'https://www.youtube.com/watch?v=wtxL7oUtqig', // Someone Else's BL Comic Animation
+  132816: 'https://www.youtube.com/watch?v=HRQXnNOO1PY', // Unbelievable Space Love
+  1217: 'https://www.youtube.com/watch?v=AAbRQQAbz-Q',   // Seikimatsu★Darling OVA
+  1216: 'https://www.youtube.com/watch?v=Og2x_UDRcFc',   // I shall never return (Boku wa Konomama Kaeranai) OVA
+  2219: 'https://www.youtube.com/watch?v=vbsGGpIW2d0',   // Ryokunohara Labyrinth: Sparkling Phantom OVA
+  730: 'https://www.youtube.com/watch?v=ogviYgC44YA',    // After School in the Teachers' Lounge OVA
+  184290: 'https://www.youtube.com/watch?v=rLTlTTXki88', // 4 Week Lovers
+  2153: 'https://www.youtube.com/watch?v=oKKg5PNARdU',   // Saint Beast: Kouin Jojishi Tenshi Tan
+  120771: 'https://www.youtube.com/watch?v=L6QopiKEnlQ', // Manly Appetites: Minegishi Loves Otsu
 };
 
-// Verified direct streaming platform links for BL anime whose AniList externalLinks omit their official streaming page
+// Verified direct streaming platform links for BL anime (by exact AniList ID)
 const VERIFIED_ANIME_PLATFORM_SUPPLEMENTS: Record<number, StreamingLink[]> = {
   108430: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GRG5WWD4R/given' }],
-  114793: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/watch/G64G2V8E6/given-the-movie' }],
+  111734: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/watch/G64G2V8E6/given-the-movie' }],
+  134710: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GRG5WWD4R/given' }],
+  162987: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GRG5WWD4R/given' }],
+  175199: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GRG5WWD4R/given' }],
   21709: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GY8VM85MR/yuri-on-ice' }],
   124153: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/G5PHNM434/sk8-the-infinity' }],
   100388: [{ site: 'Amazon Prime Video', url: 'https://www.amazon.com/dp/B07F8579GX' }],
-  167152: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/G9VHN9Q34/tadaima-okaeri' }],
+  169698: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/G9VHN9Q34/tadaima-okaeri' }],
+  167087: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GQWH0M1P3/cherry-magic-thirty-years-of-virginity-can-make-you-a-wizard' }],
+  166700: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/G8DHV7843/twilight-out-of-focus' }],
+  126288: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GEXH3W804/sasaki-and-miyano' }],
+  146743: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GEXH3W804/sasaki-and-miyano' }],
+  112788: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/watch/G31UXW8E0/the-stranger-by-the-shore' }],
+  101381: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/G6W43K05R/dakaichi--im-being-harassed-by-the-sexiest-man-of-the-year-' }],
   149: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GYQ43P536/loveless' }],
   553: [{ site: 'RetroCrush', url: 'https://www.retrocrush.tv/series/012399s/descendants-of-darkness' }],
-  114396: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/G0XHWM380/yes-no-or-maybe' }],
+  112930: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/G0XHWM380/yes-no-or-maybe' }],
   10161: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GY19042QR/no-6' }],
-  98641: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GRW42D70R/super-lovers' }],
+  21177: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GRW42D70R/super-lovers' }],
+  21836: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GRW42D70R/super-lovers' }],
+  3092: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GR758GE4Y/junjo-romantica' }],
+  4814: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GR758GE4Y/junjo-romantica' }],
+  20796: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GR758GE4Y/junjo-romantica' }],
+  9926: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/G6JQVM3GY/sekai-ichi-hatsukoi---the-worlds-greatest-first-love' }],
+  11123: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/G6JQVM3GY/sekai-ichi-hatsukoi---the-worlds-greatest-first-love' }],
+  20520: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/G609G480Y/love-stage' }],
+  87494: [{ site: 'Amazon Prime Video', url: 'https://www.amazon.com/dp/B073SFHBM2' }],
+  113260: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/G79H23XX8/heaven-officials-blessing' }],
+  127976: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/G79H23XX8/heaven-officials-blessing' }],
+  177689: [{ site: 'Netflix', url: 'https://www.netflix.com/title/81948057' }],
 };
 
 function safeDirectMediaUrl(value: string | null | undefined): string | null {
@@ -217,9 +346,11 @@ function safeDirectMediaUrl(value: string | null | undefined): string | null {
     if ((url.pathname === '/' || /^\/[a-z]{2}(?:-[a-z]{2})?\/?$/i.test(url.pathname)) && !url.search) return null;
     // Reject generic search result or category pages
     if (/\/search\b|\/results\b|\/categories\b/i.test(url.pathname)) return null;
-    // Reject generic YouTube channel/user/handle and unverified promo playlists (only allow direct verified /watch?v= video links)
+    // For YouTube, allow verified /watch?v= videos and official /playlist?list= streaming playlists; reject bare channel/user handles
     if (/(?:^|\.)youtube\.com$/i.test(url.hostname)) {
-      if (url.pathname !== '/watch' || !url.searchParams.get('v')) return null;
+      const isWatch = url.pathname === '/watch' && Boolean(url.searchParams.get('v'));
+      const isPlaylist = url.pathname === '/playlist' && Boolean(url.searchParams.get('list'));
+      if (!isWatch && !isPlaylist) return null;
     }
     return url.toString();
   } catch {
@@ -377,7 +508,7 @@ function normalize(record: AniListRecord): MediaTitle {
 
   const streamingOnlyLinks: StreamingLink[] = rawExternal
     .filter((link) => link.type === 'STREAMING')
-    .filter((link) => !/twitter|x\.com|tiktok|instagram|facebook|weibo/i.test(`${link.site ?? ''} ${link.url ?? ''}`))
+    .filter((link) => !/twitter|x\.com|tiktok|instagram|facebook|weibo|bsky\.app|bluesky/i.test(`${link.site ?? ''} ${link.url ?? ''}`))
     .flatMap((link) => {
       const url = safeDirectMediaUrl(link.url);
       const site = link.site?.trim();
@@ -386,7 +517,7 @@ function normalize(record: AniListRecord): MediaTitle {
 
   const infoPublisherLinks: StreamingLink[] = rawExternal
     .filter((link) => link.type !== 'STREAMING')
-    .filter((link) => !/twitter|x\.com|tiktok|instagram|facebook|weibo|wikipedia|animenewsnetwork|myanimelist|anilist|syoboi/i.test(`${link.site ?? ''} ${link.url ?? ''}`))
+    .filter((link) => !/twitter|x\.com|tiktok|instagram|facebook|weibo|bsky\.app|bluesky|wikipedia|animenewsnetwork|myanimelist|anilist|syoboi/i.test(`${link.site ?? ''} ${link.url ?? ''}`))
     .flatMap((link) => {
       const url = safeDirectMediaUrl(link.url);
       const site = link.site?.trim();
