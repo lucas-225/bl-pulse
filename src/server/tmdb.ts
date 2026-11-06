@@ -83,7 +83,7 @@ function mapTmdbStatus(firstAirDate?: string): SeriesStatus {
   return 'completed';
 }
 
-function normalizeProviderNameAndUrl(rawName: string, seriesTitle: string): { name: string; url: string } {
+function normalizeProviderNameAndUrl(rawName: string, seriesTitle: string): { name: string; url: string } | null {
   const lower = rawName.toLowerCase();
   if (lower.includes('viki')) {
     return { name: 'Viki', url: `https://www.viki.com/search?q=${encodeURIComponent(seriesTitle)}` };
@@ -106,13 +106,7 @@ function normalizeProviderNameAndUrl(rawName: string, seriesTitle: string): { na
   if (lower.includes('bilibili')) {
     return { name: 'Bilibili', url: `https://www.bilibili.tv/en/search-result?q=${encodeURIComponent(seriesTitle)}` };
   }
-  if (lower.includes('youtube')) {
-    return { name: 'YouTube', url: `https://www.youtube.com/results?search_query=${encodeURIComponent(`${seriesTitle} Episode 1 Eng Sub`)}` };
-  }
-  return {
-    name: rawName,
-    url: `https://www.youtube.com/results?search_query=${encodeURIComponent(`${seriesTitle} ${rawName} Episode 1`)}`,
-  };
+  return null;
 }
 
 export async function fetchTmdbWatchProviders(tvId: number, seriesTitle = ''): Promise<PlatformLink[]> {
@@ -133,6 +127,7 @@ export async function fetchTmdbWatchProviders(tvId: number, seriesTitle = ''): P
       const providers = [...(regData.flatrate ?? []), ...(regData.free ?? []), ...(regData.buy ?? [])];
       for (const prov of providers) {
         const mapped = normalizeProviderNameAndUrl(prov.provider_name, seriesTitle);
+        if (!mapped) continue;
         const key = mapped.name.toLowerCase();
         if (!seen.has(key)) {
           seen.add(key);
@@ -198,13 +193,7 @@ export async function fetchTmdbCatalog(): Promise<Series[]> {
         year: Number.isFinite(year) ? year : undefined,
         releaseDate: tv.first_air_date,
         genres,
-        platforms: [
-          {
-            name: 'YouTube',
-            url: `https://www.youtube.com/results?search_query=${encodeURIComponent(`${tv.name} Episode 1 BL Eng Sub`)}`,
-            source: 'official',
-          },
-        ],
+        platforms: [],
         updatedAt: new Date().toISOString(),
       });
     }

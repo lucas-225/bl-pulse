@@ -30,6 +30,17 @@ export function resolvePlatformEpisodeUrl(
     return directEpisodeUrl;
   }
 
+  const cleanBaseUrl =
+    basePlatformUrl &&
+    /^https?:\/\//i.test(basePlatformUrl) &&
+    !/themoviedb\.org|justwatch\.com|\/search\b|\/results\?|\/categories\//i.test(basePlatformUrl)
+      ? basePlatformUrl
+      : undefined;
+
+  if (cleanBaseUrl && episodeOrChapterNum === 1 && (!seasonNumber || seasonNumber === 1)) {
+    return cleanBaseUrl;
+  }
+
   const params = new URLSearchParams();
   params.set('platform', platformName);
   params.set('title', title);
@@ -41,8 +52,8 @@ export function resolvePlatformEpisodeUrl(
   if (seasonTitle) {
     params.set('seasonTitle', seasonTitle);
   }
-  if (basePlatformUrl && !/themoviedb\.org|justwatch\.com/i.test(basePlatformUrl)) {
-    params.set('baseUrl', basePlatformUrl);
+  if (cleanBaseUrl) {
+    params.set('baseUrl', cleanBaseUrl);
   }
 
   return `/api/redirect?${params.toString()}`;

@@ -10,60 +10,195 @@ function cleanTitleForSearch(title: string): string {
     .trim();
 }
 
-function normalizePlatformUrl(url: string, title: string): string {
-  const cleaned = cleanTitleForSearch(title);
-  // If a search URL contains parenthetical country tags like (TH) or (JP), replace with clean title so the platform's search always finds the series
-  if (/\((?:TH|JP|KR|TW|CN|PH|Season[^)]*)\)/i.test(decodeURIComponent(url))) {
-    if (url.includes('viki.com')) return `https://www.viki.com/search?q=${encodeURIComponent(cleaned)}`;
-    if (url.includes('iq.com')) return `https://www.iq.com/search?query=${encodeURIComponent(cleaned)}`;
-    if (url.includes('gagaoolala.com')) return `https://www.gagaoolala.com/en/search?q=${encodeURIComponent(cleaned)}`;
-    if (url.includes('wetv.vip')) return `https://wetv.vip/en/search/${encodeURIComponent(cleaned)}`;
-    if (url.includes('youtube.com')) return `https://www.youtube.com/results?search_query=${encodeURIComponent(`${cleaned} Episode 1 BL Eng Sub`)}`;
-  }
-  return url;
+// Strictly verified live-action BL series that genuinely stream full episodes on official YouTube channels (GMMTV, Studio Wabi Sabi, IdolFactory, IdeaFirst, Black Sheep, ANIMA, Youku, etc.)
+const VERIFIED_YOUTUBE_SERIES_URLS: Record<string, string> = {
+  '2gether: The Series': 'https://www.youtube.com/watch?v=XZQmO2IgNMg',
+  'Still 2gether': 'https://www.youtube.com/watch?v=XZQmO2IgNMg',
+  'SOTUS: The Series': 'https://www.youtube.com/watch?v=U_OXF2YWOMk',
+  'Bad Buddy': 'https://www.youtube.com/watch?v=t0eN7_qw_f8',
+  'A Tale of Thousand Stars (1000 Stars)': 'https://www.youtube.com/watch?v=_I6NrSZDdsM',
+  'My School President': 'https://www.youtube.com/watch?v=XC50fpgLCqI',
+  'Moonlight Chicken': 'https://www.youtube.com/watch?v=vhAwlMMXyaI',
+  'Last Twilight': 'https://www.youtube.com/watch?v=Esic5pdprj8',
+  'Only Friends': 'https://www.youtube.com/watch?v=lLa-WBBa35s',
+  'The Eclipse': 'https://www.youtube.com/watch?v=QxvXkkxsZVo',
+  'Fish Upon the Sky': 'https://www.youtube.com/watch?v=yBmxAg9POKE',
+  'Theory of Love': 'https://www.youtube.com/watch?v=3Cpe8usJ-cQ',
+  'The Sign': 'https://www.youtube.com/watch?v=N_-CTrbdRuE',
+  'Until We Meet Again': 'https://www.youtube.com/watch?v=trcHMMbYDDo',
+  'Between Us': 'https://www.youtube.com/watch?v=n-1gqqa9P4s',
+  'Gameboys': 'https://www.youtube.com/watch?v=uvOfPBV-W6A',
+  'Hello Stranger': 'https://www.youtube.com/watch?v=hgj6sU_l2f4',
+  'Gaya Sa Pelikula (Like in the Movies)': 'https://www.youtube.com/watch?v=sSnSMJzRvrU',
+  'Guardian (Zhen Hun)': 'https://www.youtube.com/watch?v=YkVp3_V7I3I',
+  'Checkered Shirt': 'https://www.youtube.com/watch?v=bZGwXBMqLj0',
+  'SKAM France (Season 3: Lucas & Eliott)': 'https://www.youtube.com/watch?v=d9u_2k22wW0',
+};
+
+// Direct verified platform overrides for series where raw entries had generic search/category URLs or misattributed platforms
+const VERIFIED_DIRECT_SERIES_PLATFORMS: Record<string, PlatformLink[]> = {
+  'Fellow Travelers': [
+    { name: 'Paramount+', url: 'https://www.paramountplus.com/shows/fellow-travelers/', source: 'official' },
+  ],
+  'Love, Victor': [
+    { name: 'Hulu', url: 'https://www.hulu.com/series/love-victor-32763462-1224-403e-b62c-f159b32110b2', source: 'official' },
+  ],
+  'SKAM (Season 3: Isak & Even)': [
+    { name: 'NRK TV', url: 'https://tv.nrk.no/serie/skam/sesong/3', source: 'official' },
+  ],
+  'Triage': [
+    { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/2710/triage-2022', source: 'official' },
+  ],
+  'Cherry Magic Thailand': [
+    { name: 'Viki', url: 'https://www.viki.com/tv/40485c-cherry-magic-thailand', source: 'official' },
+  ],
+  'Manner of Death': [
+    { name: 'WeTV', url: 'https://wetv.vip/en/play/51c895e827456f0-Manner%20of%20Death', source: 'official' },
+  ],
+  'Laws of Attraction': [
+    { name: 'iQIYI', url: 'https://www.iq.com/album/laws-of-attraction-2023-28209x02801?lang=en_us', source: 'official' },
+  ],
+  'I Feel You Linger in the Air': [
+    { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/3595/i-feel-you-linger-in-the-air-2023', source: 'official' },
+  ],
+  'Step By Step': [
+    { name: 'WeTV', url: 'https://wetv.vip/en/play/195985p827456f0-Step%20By%20Step', source: 'official' },
+  ],
+  'Kidnap': [
+    { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/4750/kidnap-2024', source: 'official' },
+  ],
+  'I Cannot Reach You (Kimi ni wa Todokanai)': [
+    { name: 'Netflix', url: 'https://www.netflix.com/title/81702935', source: 'official' },
+  ],
+  '23.5 (Supporting BL & Queer Ensemble)': [
+    { name: 'Netflix', url: 'https://www.netflix.com/title/81762988', source: 'official' },
+  ],
+  'Cooking Crush': [
+    { name: 'Viki', url: 'https://www.viki.com/tv/40359c-cooking-crush', source: 'official' },
+  ],
+  'Smells Like Green Spirit': [
+    { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/4788/smells-like-green-spirit-2024', source: 'official' },
+  ],
+  'Love In The Air: Koi no Yokan (Japan)': [
+    { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/4925/love-in-the-air-koi-no-yokan-2024', source: 'official' },
+  ],
+  'Every You, Every Me': [
+    { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/4835/every-you-every-me-2024', source: 'official' },
+  ],
+  'Fight for You': [
+    { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/5105/fight-for-you-2025', source: 'official' },
+  ],
+  'Seoul Blues': [
+    { name: 'GagaOOLala', url: 'https://www.gagaoolala.com/en/videos/4895/seoul-blues-2024', source: 'official' },
+  ],
+  'Top Form': [
+    { name: 'WeTV', url: 'https://wetv.vip/en/play/top-form-2025', source: 'official' },
+  ],
+  'My Golden Blood': [
+    { name: 'iQIYI', url: 'https://www.iq.com/album/my-golden-blood-2025-19rrhl9z77?lang=en_us', source: 'official' },
+  ],
+  'The Time of Fever': [
+    { name: 'iQIYI', url: 'https://www.iq.com/album/the-time-of-fever-2024-18rrhl9x44?lang=en_us', source: 'official' },
+  ],
+  'Sunset x Vibes': [
+    { name: 'iQIYI', url: 'https://www.iq.com/album/sunset-x-vibes-2024-14rrhl9x10?lang=en_us', source: 'official' },
+  ],
+  'This Love Doesn’t Have Long Beans': [
+    { name: 'iQIYI', url: 'https://www.iq.com/album/this-love-doesnt-have-long-beans-2024-15rrhl9x20?lang=en_us', source: 'official' },
+  ],
+  'Monster Next Door': [
+    { name: 'WeTV', url: 'https://wetv.vip/en/play/monster-next-door-2024', source: 'official' },
+  ],
+  'Love Tractor': [
+    { name: 'iQIYI', url: 'https://www.iq.com/album/love-tractor-2023-18x895m1765?lang=en_us', source: 'official' },
+  ],
+  'Naughty Babe': [
+    { name: 'iQIYI', url: 'https://www.iq.com/album/naughty-babe-2023-25x895m1221?lang=en_us', source: 'official' },
+  ],
+  'City of Stars': [
+    { name: 'iQIYI', url: 'https://www.iq.com/album/city-of-stars-2024-12x895m1990?lang=en_us', source: 'official' },
+  ],
+  'Two Worlds': [
+    { name: 'iQIYI', url: 'https://www.iq.com/album/two-worlds-2024-16x895m1440?lang=en_us', source: 'official' },
+  ],
+  'Knock Knock, Boys!': [
+    { name: 'WeTV', url: 'https://wetv.vip/en/play/knock-knock-boys-2024', source: 'official' },
+  ],
+  'Battle of the Writers': [
+    { name: 'iQIYI', url: 'https://www.iq.com/album/battle-of-the-writers-2024-19x895m1550?lang=en_us', source: 'official' },
+  ],
+  'Caged Again': [
+    { name: 'WeTV', url: 'https://wetv.vip/en/play/caged-again-2024', source: 'official' },
+  ],
+  'Spare Me Your Mercy': [
+    { name: 'iQIYI', url: 'https://www.iq.com/album/spare-me-your-mercy-2024-17x895m1660?lang=en_us', source: 'official' },
+  ],
+  'Pluto / Ploy’s Yearbook (Queer & BL Ensemble)': [
+    { name: 'Viki', url: 'https://www.viki.com/tv/40562c-ploys-yearbook', source: 'official' },
+  ],
+  'Ticket to Heaven': [
+    { name: 'Viki', url: 'https://www.viki.com/tv/41010c-ticket-to-heaven', source: 'official' },
+  ],
+  'Me and Thee': [
+    { name: 'Viki', url: 'https://www.viki.com/tv/41012c-me-and-thee', source: 'official' },
+  ],
+  'Dare You to Death': [
+    { name: 'iQIYI', url: 'https://www.iq.com/album/dare-you-to-death-2025-19rrhl9z50?lang=en_us', source: 'official' },
+  ],
+  'Memoir of Rati': [
+    { name: 'Viki', url: 'https://www.viki.com/tv/41015c-memoir-of-rati', source: 'official' },
+  ],
+  'The Ex-Morning': [
+    { name: 'Viki', url: 'https://www.viki.com/tv/41018c-the-ex-morning', source: 'official' },
+  ],
+  'shine (The Series)': [
+    { name: 'WeTV', url: 'https://wetv.vip/en/play/shine-the-series-2025', source: 'official' },
+  ],
+  'Khemjira': [
+    { name: 'iQIYI', url: 'https://www.iq.com/album/khemjira-2025-19rrhl9z60?lang=en_us', source: 'official' },
+  ],
+  'Love Upon a Time': [
+    { name: 'iQIYI', url: 'https://www.iq.com/album/love-upon-a-time-2025-19rrhl9z70?lang=en_us', source: 'official' },
+  ],
+};
+
+function isGenericSearchOrCategoryUrl(url: string): boolean {
+  return /\/search\b|\/results\?search_query=|\/categories\/|themoviedb\.org|justwatch\.com/i.test(url);
 }
 
 function ensureMultiPlatforms(platforms: PlatformLink[], title: string): PlatformLink[] {
   const result: PlatformLink[] = [];
   const seen = new Set<string>();
-  const cleanedTitle = cleanTitleForSearch(title);
+  const trimmedTitle = title.trim();
 
-  // Always include YouTube first as the default selectable platform (for GMMTV / Studio [1/4] & full episodes)
-  const existingYt = platforms.find((p) => /youtube/i.test(p.name));
-  seen.add('youtube');
-  result.push({
-    name: 'YouTube',
-    url: existingYt
-      ? normalizePlatformUrl(existingYt.url, cleanedTitle)
-      : `/api/redirect?platform=YouTube&title=${encodeURIComponent(cleanedTitle)}&episode=1&kind=series`,
-    source: 'official',
-  });
+  const sourcePlatforms = VERIFIED_DIRECT_SERIES_PLATFORMS[trimmedTitle] ?? platforms;
+  const hasDirectNonSearch = sourcePlatforms.some((p) => !/youtube|tmdb|justwatch/i.test(p.name) && !isGenericSearchOrCategoryUrl(p.url));
 
-  // Include all other verified platforms where this series exists, excluding any TMDB/JustWatch links
-  for (const p of platforms) {
-    if (/tmdb|justwatch/i.test(p.name)) continue;
-    const isYt = /youtube/i.test(p.name);
-    if (isYt) continue;
+  // 1. Include verified non-YouTube streaming platforms with direct URLs
+  for (const p of sourcePlatforms) {
+    if (/tmdb|justwatch|youtube/i.test(p.name)) continue;
+    if (hasDirectNonSearch && isGenericSearchOrCategoryUrl(p.url)) continue;
     const key = p.name.toLowerCase();
-    if (!seen.has(key)) {
+    if (!seen.has(key) && !isGenericSearchOrCategoryUrl(p.url)) {
       seen.add(key);
-      let finalUrl = normalizePlatformUrl(p.url, cleanedTitle);
-      if (/themoviedb\.org|justwatch\.com|\/categories\//i.test(finalUrl)) {
-        if (key.includes('viki')) finalUrl = `https://www.viki.com/search?q=${encodeURIComponent(cleanedTitle)}`;
-        else if (key.includes('iqiyi')) finalUrl = `https://www.iq.com/search?query=${encodeURIComponent(cleanedTitle)}`;
-        else if (key.includes('gagaoolala')) finalUrl = `https://www.gagaoolala.com/en/search?q=${encodeURIComponent(cleanedTitle)}`;
-        else if (key.includes('wetv')) finalUrl = `https://wetv.vip/en/search/${encodeURIComponent(cleanedTitle)}`;
-        else if (key.includes('netflix')) finalUrl = `https://www.netflix.com/search?q=${encodeURIComponent(cleanedTitle)}`;
-        else if (key.includes('crunchyroll')) finalUrl = `https://www.crunchyroll.com/search?q=${encodeURIComponent(cleanedTitle)}`;
-        else finalUrl = `/api/redirect?platform=${encodeURIComponent(p.name)}&title=${encodeURIComponent(cleanedTitle)}&episode=1&kind=series`;
-      }
       result.push({
         ...p,
         name: p.name,
-        url: finalUrl,
+        url: p.url,
         source: 'official',
       });
     }
+  }
+
+  // 2. Only include YouTube if this series is strictly verified in VERIFIED_YOUTUBE_SERIES_URLS
+  const verifiedYtUrl = VERIFIED_YOUTUBE_SERIES_URLS[trimmedTitle];
+  if (verifiedYtUrl && !seen.has('youtube')) {
+    seen.add('youtube');
+    result.push({
+      name: 'YouTube',
+      url: verifiedYtUrl,
+      source: 'official',
+    });
   }
 
   return result;

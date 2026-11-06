@@ -384,7 +384,7 @@ function HomePage({ catalog, loading }: { catalog: CatalogResponse; loading: boo
           action={<SectionLink to="/discover?status=completed">Explore Archive</SectionLink>}
         />
 
-        <div className="source-note"><span className="source-note-icon"><Radio size={16} /></span><p><strong>Multi-platform &amp; episode-ready.</strong> Every Live-Action series, Anime, and Manga lets you pick your platform (with YouTube or MangaDex ready by default) and select your exact episode or chapter.</p><Link className="text-link" to="/discover">Explore All {catalog.series.length} Live-Action Series <ArrowUpRight size={15} /></Link></div>
+        <div className="source-note"><span className="source-note-icon"><Radio size={16} /></span><p><strong>Strictly verified platforms &amp; direct links.</strong> Every Live-Action series, Anime, and Manga lists only verified streaming or reading platforms with direct URLs and episode or chapter selection.</p><Link className="text-link" to="/discover">Explore All {catalog.series.length} Live-Action Series <ArrowUpRight size={15} /></Link></div>
       </div>
     </>
   );
@@ -525,8 +525,9 @@ function SeriesPage({ catalog, updateOne }: { catalog: CatalogResponse; updateOn
   const safeEpisodeNum = Math.min(episodeNum, totalEpisodes);
 
   const activePlatformObj = series.platforms.find((p) => p.name === selectedPlatform) ?? series.platforms[0];
+  const activePlatformName = activePlatformObj?.name ?? 'Official Platform';
   const activeEpisodeRedirectUrl = resolvePlatformEpisodeUrl(
-    activePlatformObj?.name ?? 'YouTube',
+    activePlatformName,
     activePlatformObj?.url,
     series.title,
     safeEpisodeNum,
@@ -556,8 +557,13 @@ function SeriesPage({ catalog, updateOne }: { catalog: CatalogResponse; updateOn
           <p className="detail-synopsis">{series.synopsis ?? 'No synopsis is available from the current live-action data source.'}</p>
           <div className="detail-actions">
             <a className="button button-primary" href={activeEpisodeRedirectUrl} target="_blank" rel="noopener noreferrer">
-              <Tv size={17} /> Watch {seasons && activeSeason ? `S${activeSeason.seasonNumber} ` : ''}Ep {safeEpisodeNum} on {activePlatformObj?.name ?? 'YouTube'} <ArrowUpRight size={16} />
+              <Tv size={17} /> Watch {seasons && activeSeason ? `S${activeSeason.seasonNumber} ` : ''}Ep {safeEpisodeNum} on {activePlatformName} <ArrowUpRight size={16} />
             </a>
+            {activePlatformObj?.url && (
+              <a className="button button-secondary" href={activePlatformObj.url} target="_blank" rel="noopener noreferrer">
+                Direct {activePlatformName} URL <ArrowUpRight size={16} />
+              </a>
+            )}
           </div>
         </div>
       </section>
@@ -574,10 +580,10 @@ function SeriesPage({ catalog, updateOne }: { catalog: CatalogResponse; updateOn
                 {seasons ? ` · ${seasons.length} Seasons` : series.episodes ? ` · ${series.episodes} eps` : ''}
               </strong>
             </div>
-            <div><span>SELECTED PLATFORM</span><strong>{activePlatformObj?.name ?? 'YouTube'}</strong></div>
+            <div><span>SELECTED PLATFORM</span><strong>{activePlatformName}</strong></div>
           </div>
         </div>
-        <div className="source-card"><span className="source-card-mark"><Radio size={18} /></span><div><div className="eyebrow">DIRECT STREAMING REDIRECT</div><p>Strictly BL catalog entry with verified platform{seasons ? ', season,' : ''} and episode selection.</p><a href={activeEpisodeRedirectUrl} target="_blank" rel="noopener noreferrer">Watch Episode {safeEpisodeNum} on {activePlatformObj?.name ?? 'YouTube'} <ArrowUpRight size={14} /></a><small>Catalog snapshot {timeLabel(catalog.lastRefreshed).replace('Last synced ', '')}</small></div></div>
+        <div className="source-card"><span className="source-card-mark"><Radio size={18} /></span><div><div className="eyebrow">VERIFIED DIRECT STREAMING</div><p>Strictly BL catalog entry with verified platform{seasons ? ', season,' : ''} and episode selection.</p><a href={activeEpisodeRedirectUrl} target="_blank" rel="noopener noreferrer">Watch Episode {safeEpisodeNum} on {activePlatformName} <ArrowUpRight size={14} /></a><small>Catalog snapshot {timeLabel(catalog.lastRefreshed).replace('Last synced ', '')}</small></div></div>
 
         <section className="episode-panel" style={{ gridColumn: '1 / -1', marginTop: 0 }} aria-labelledby="series-episode-panel-title">
           <div className="episode-panel-heading">

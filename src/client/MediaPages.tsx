@@ -376,15 +376,8 @@ function EpisodeAndChapterPicker({ item }: { item: MediaTitle }) {
   }, [item.streamingLinks]);
 
   const defaultPlatform = useMemo(() => {
-    if (isAnime) {
-      return uniquePlatforms.find((p) => /youtube/i.test(p.site))?.site
-        ?? uniquePlatforms[0]?.site
-        ?? 'YouTube';
-    }
-    return uniquePlatforms.find((p) => /mangadex/i.test(p.site))?.site
-      ?? uniquePlatforms[0]?.site
-      ?? 'AniList Official Source';
-  }, [isAnime, uniquePlatforms]);
+    return uniquePlatforms[0]?.site ?? '';
+  }, [uniquePlatforms]);
 
   const [selectedPlatform, setSelectedPlatform] = useState(defaultPlatform);
   const [number, setNumber] = useState(1);
@@ -393,7 +386,7 @@ function EpisodeAndChapterPicker({ item }: { item: MediaTitle }) {
   useEffect(() => {
     setSelectedPlatform(defaultPlatform);
     setNumber(1);
-  }, [item.id]);
+  }, [item.id, defaultPlatform]);
 
   // Ensure selectedPlatform stays valid if uniquePlatforms updates for the same item
   useEffect(() => {
@@ -410,6 +403,30 @@ function EpisodeAndChapterPicker({ item }: { item: MediaTitle }) {
   const dropdownTotal = Math.min(Math.max(maxNumber, 1), 200);
 
   const activePlatformObj = uniquePlatforms.find((p) => p.site === selectedPlatform) ?? uniquePlatforms[0];
+
+  if (uniquePlatforms.length === 0) {
+    return (
+      <section className="episode-panel" aria-labelledby="episode-panel-title">
+        <div className="episode-panel-heading">
+          <div>
+            <div className="eyebrow">STRICT PLATFORM VERIFICATION</div>
+            <h2 id="episode-panel-title">
+              No verified {isAnime ? 'streaming' : 'digital reading'} platform is currently listed for this title.
+            </h2>
+          </div>
+          <span className="episode-source-badge">0 verified platforms</span>
+        </div>
+        <div className="episode-search-block">
+          <p style={{ marginTop: 0, marginBottom: '14px' }}>
+            BL Pulse only lists platforms after verifying that the title genuinely streams or is readable on that service. Check the official AniList entry for licensing updates or physical editions.
+          </p>
+          <a className="button button-secondary" href={item.sourceUrl} target="_blank" rel="noopener noreferrer">
+            Check official AniList page <ArrowUpRight size={15} />
+          </a>
+        </div>
+      </section>
+    );
+  }
 
   function getEpisodeUrlFor(epNumber: number, platformName: string, basePlatformUrl?: string): string {
     const platformEps = item.streamingEpisodes.filter(
@@ -448,8 +465,8 @@ function EpisodeAndChapterPicker({ item }: { item: MediaTitle }) {
           </div>
           <h2 id="episode-panel-title">
             {isAnime
-              ? `Select available platform${seasons ? ', season,' : ''} and episode to watch.`
-              : `Select available platform${seasons ? ', season,' : ''} and chapter to read.`}
+              ? `Select verified platform${seasons ? ', season,' : ''} and episode to watch.`
+              : `Select verified platform${seasons ? ', season,' : ''} and chapter to read.`}
           </h2>
         </div>
         <span className="episode-source-badge">
@@ -464,7 +481,7 @@ function EpisodeAndChapterPicker({ item }: { item: MediaTitle }) {
         {/* Step 1: Verified Available Platforms */}
         <div style={{ marginBottom: '18px' }}>
           <label className="episode-select-label" htmlFor="platform-select" style={{ display: 'block', marginBottom: '8px' }}>
-            1. Select Available Platform ({uniquePlatforms.length} verified for this {isAnime ? 'anime' : 'manga'})
+            1. Select Verified Platform ({uniquePlatforms.length} verified for this {isAnime ? 'anime' : 'manga'})
           </label>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '6px' }}>
             {uniquePlatforms.map((pf) => {
@@ -567,6 +584,12 @@ function EpisodeAndChapterPicker({ item }: { item: MediaTitle }) {
               : `Read Chapter ${number} on ${selectedPlatform}`}{' '}
             <ArrowUpRight size={15} />
           </a>
+
+          {activePlatformObj?.url && (
+            <a className="button button-secondary" href={activePlatformObj.url} target="_blank" rel="noopener noreferrer">
+              Direct {selectedPlatform} URL <ArrowUpRight size={15} />
+            </a>
+          )}
         </div>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '14px', marginBottom: '12px' }}>

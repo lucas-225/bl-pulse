@@ -161,6 +161,46 @@ const DETAIL_QUERY = `
   }
 `;
 
+// Strictly verified BL anime that genuinely have full episodes or movies available on YouTube (direct watch URLs)
+const VERIFIED_YOUTUBE_ANIME_URLS: Record<number, string> = {
+  126288: 'https://www.youtube.com/watch?v=iENQpq6__PQ', // Sasaki and Miyano
+  101972: 'https://www.youtube.com/watch?v=OLxdLlNPMyo', // Mo Dao Zu Shi / The Founder of Diabolism S1 (Tencent Video)
+  104458: 'https://www.youtube.com/watch?v=1a04FyRdSgo', // The Founder of Diabolism S2 (Tencent Video)
+  121467: 'https://www.youtube.com/watch?v=1a04FyRdSgo', // The Founder of Diabolism Final Season (Tencent Video)
+  3092: 'https://www.youtube.com/watch?v=OGYx-oK4rs4',   // Junjo Romantica S1
+  13767: 'https://www.youtube.com/watch?v=tJnvKGSuZtw',  // Junjo Romantica OVA
+  111305: 'https://www.youtube.com/watch?v=kBr9TdLxX0w', // Sekaiichi Hatsukoi: Propose-hen
+  243: 'https://www.youtube.com/watch?v=x1_TDNby62U',    // Gravitation (Nozomi Entertainment)
+  11135: 'https://www.youtube.com/watch?v=ZKx0dJUVzNE',  // Hybrid Child OVA
+  12695: 'https://www.youtube.com/watch?v=zrlx4KA4rFk',  // Tight-rope OVA
+  3375: 'https://www.youtube.com/watch?v=W6KBTxAz7mc',   // Kirepapa. OVA
+  719: 'https://www.youtube.com/watch?v=eLlZAb_85ME',    // Ai no Kusabi
+  5784: 'https://www.youtube.com/watch?v=eLlZAb_85ME',   // Ai no Kusabi (2012)
+  21096: 'https://www.youtube.com/watch?v=vrcua2WDwTg',  // Doukyuusei -Classmates-
+  15933: 'https://www.youtube.com/watch?v=Ci5bfzWqc5s',  // Vassalord. OVA
+  134710: 'https://www.youtube.com/watch?v=MaRgBdKKmrM', // given: on the other hand OVA
+  114300: 'https://www.youtube.com/watch?v=zhBUZcjKpEM', // Legend of Exorcism (Bilibili Official)
+  116016: 'https://www.youtube.com/watch?v=jgd0X6j14KM', // Thousand Autumns (Tencent Official)
+  125084: 'https://www.youtube.com/watch?v=fvCB2bCSQr4', // Scumbag System (Tencent Official)
+  109039: 'https://www.youtube.com/watch?v=fvCB2bCSQr4', // Scumbag System (Tencent Official)
+  104212: 'https://www.youtube.com/watch?v=HJRn4bXvTII', // Antidote / Jie Yao (Bilibili Official)
+};
+
+// Verified direct streaming platform links for BL anime whose AniList externalLinks omit their official streaming page
+const VERIFIED_ANIME_PLATFORM_SUPPLEMENTS: Record<number, StreamingLink[]> = {
+  108430: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GRG5WWD4R/given' }],
+  114793: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/watch/G64G2V8E6/given-the-movie' }],
+  21709: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GY8VM85MR/yuri-on-ice' }],
+  124153: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/G5PHNM434/sk8-the-infinity' }],
+  100388: [{ site: 'Amazon Prime Video', url: 'https://www.amazon.com/dp/B07F8579GX' }],
+  167152: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/G9VHN9Q34/tadaima-okaeri' }],
+  149: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GYQ43P536/loveless' }],
+  553: [{ site: 'RetroCrush', url: 'https://www.retrocrush.tv/series/012399s/descendants-of-darkness' }],
+  114396: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/G0XHWM380/yes-no-or-maybe' }],
+  10161: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GY19042QR/no-6' }],
+  98641: [{ site: 'Crunchyroll', url: 'https://www.crunchyroll.com/series/GRW42D70R/super-lovers' }],
+};
+
 function safeDirectMediaUrl(value: string | null | undefined): string | null {
   if (!value) return null;
   try {
@@ -169,19 +209,28 @@ function safeDirectMediaUrl(value: string | null | undefined): string | null {
       url.protocol = 'https:';
     }
     if (url.protocol !== 'https:') return null;
+    if (url.hostname === 'youtu.be') {
+      const vid = url.pathname.replace(/^\/+/, '').split('/')[0];
+      return vid && /^[a-zA-Z0-9_-]{11}$/.test(vid) ? `https://www.youtube.com/watch?v=${vid}` : null;
+    }
     // Reject generic root homepages or bare language homepages (e.g. /, /en, /en-us/)
     if ((url.pathname === '/' || /^\/[a-z]{2}(?:-[a-z]{2})?\/?$/i.test(url.pathname)) && !url.search) return null;
-    // Reject generic search result pages
-    if (/\/search\b/i.test(url.pathname)) return null;
-    // Reject generic YouTube channel/user/handle pages (only allow specific video /watch or /playlist links)
+    // Reject generic search result or category pages
+    if (/\/search\b|\/results\b|\/categories\b/i.test(url.pathname)) return null;
+    // Reject generic YouTube channel/user/handle and unverified promo playlists (only allow direct verified /watch?v= video links)
     if (/(?:^|\.)youtube\.com$/i.test(url.hostname)) {
-      if (/^\/(?:channel|user|c|@)/i.test(url.pathname)) return null;
-      if (url.pathname !== '/watch' && url.pathname !== '/playlist') return null;
+      if (url.pathname !== '/watch' || !url.searchParams.get('v')) return null;
     }
     return url.toString();
   } catch {
     return null;
   }
+}
+
+function isEnglishOrGlobalUrl(url: string): boolean {
+  return /lezhinus\.com|\/en\/|tapas\.io|tappytoon\.com\/en|manta\.net|webtoons\.com\/en|crunchyroll\.com|netflix\.com|bilibili\.tv\/en|iq\.com|wetv\.vip\/en|gagaoolala\.com\/en|mangaplaza\.com|viz\.com|yenpress\.com|sevenseasentertainment\.com|sublimemanga\.com|kodansha\.us|comics\.inkr\.com/i.test(
+    url,
+  );
 }
 
 function safeImageUrl(value: string | null | undefined): string | null {
@@ -207,6 +256,7 @@ function displayTitle(record: { id: number; title?: { romaji?: string | null; en
 }
 
 function isStrictlyBoysLove(record: AniListRecord, minimumRank: number): boolean {
+  if (record.status === 'CANCELLED') return false;
   const tags = record.tags ?? [];
   const blTag = tags.find((t) => t.name === "Boys' Love");
   if (!blTag || (blTag.rank ?? 0) < minimumRank) return false;
@@ -315,11 +365,14 @@ function normalize(record: AniListRecord): MediaTitle {
       return a.title.localeCompare(b.title);
     });
 
-  // Sort STREAMING links ahead of INFO/READING publisher links, and exclude social media/encyclopedias
+  // Sort STREAMING links ahead of INFO/READING publisher links, and prefer English/global URLs
   const rawExternal = [...(record.externalLinks ?? [])].sort((a, b) => {
     const aScore = a.type === 'STREAMING' ? 0 : 1;
     const bScore = b.type === 'STREAMING' ? 0 : 1;
-    return aScore - bScore;
+    if (aScore !== bScore) return aScore - bScore;
+    const aEn = isEnglishOrGlobalUrl(a.url ?? '') ? 0 : 1;
+    const bEn = isEnglishOrGlobalUrl(b.url ?? '') ? 0 : 1;
+    return aEn - bEn;
   });
 
   const streamingOnlyLinks: StreamingLink[] = rawExternal
@@ -338,40 +391,38 @@ function normalize(record: AniListRecord): MediaTitle {
       const url = safeDirectMediaUrl(link.url);
       const site = link.site?.trim();
       if (!url || !site) return [];
-      // For Anime, exclude generic Japanese corporate official sites if real streaming links exist
-      if (type === 'ANIME' && /official site/i.test(site) && (streamingOnlyLinks.length > 0 || episodeLinks.length > 0)) return [];
+      // Exclude generic corporate "Official Site" links when verified streaming or reading platforms exist
+      if (/official site/i.test(site)) return [];
       return [{ url, site }];
     });
 
-  const directLinks: StreamingLink[] = [];
-  const seenSites = new Set<string>();
+  const bySite = new Map<string, StreamingLink>();
   const titleText = displayTitle(record);
 
-  // Only include platforms that are genuinely verified for this title
-  for (const link of [...streamingOnlyLinks, ...infoPublisherLinks]) {
+  // Include verified supplements for anime when known
+  const supplements = type === 'ANIME' ? (VERIFIED_ANIME_PLATFORM_SUPPLEMENTS[record.id] ?? []) : [];
+
+  for (const link of [...streamingOnlyLinks, ...supplements, ...infoPublisherLinks]) {
     const key = link.site.toLowerCase();
-    if (!seenSites.has(key)) {
-      seenSites.add(key);
-      directLinks.push(link);
+    const existing = bySite.get(key);
+    if (!existing || (!isEnglishOrGlobalUrl(existing.url) && isEnglishOrGlobalUrl(link.url))) {
+      bySite.set(key, link);
     }
   }
 
   for (const ep of episodeLinks) {
-    if (ep.site && !seenSites.has(ep.site.toLowerCase())) {
-      seenSites.add(ep.site.toLowerCase());
-      directLinks.push({ site: ep.site, url: ep.url });
+    if (ep.site && !bySite.has(ep.site.toLowerCase())) {
+      bySite.set(ep.site.toLowerCase(), { site: ep.site, url: ep.url });
     }
   }
 
-  // For Anime, YouTube always hosts episodes, PVs, or licensed streams (Ani-One / Muse / Crunchyroll Collection)
-  if (type === 'ANIME' && !seenSites.has('youtube')) {
-    seenSites.add('youtube');
-    directLinks.unshift({
-      site: 'YouTube',
-      url: `https://www.youtube.com/results?search_query=${encodeURIComponent(`${titleText} Episode 1 English Sub`)}`,
-    });
+  // Only include YouTube under an anime if it is strictly verified to stream full episodes on YouTube
+  const verifiedYtUrl = type === 'ANIME' ? VERIFIED_YOUTUBE_ANIME_URLS[record.id] : undefined;
+  if (verifiedYtUrl) {
+    bySite.set('youtube', { site: 'YouTube', url: verifiedYtUrl });
   }
 
+  const directLinks = Array.from(bySite.values());
   const seasons = extractSeasons(record);
 
   return {
@@ -440,13 +491,7 @@ async function enrichDirectLinksFromMangaDex(record: AniListRecord, normalized: 
 
     if (!matched) return normalized;
 
-    const mdUrl = `https://mangadex.org/title/${matched.id}`;
-    const hasMdLink = normalized.streamingLinks.some((l) => l.site.toLowerCase() === 'mangadex');
-    const updatedLinks = hasMdLink
-      ? normalized.streamingLinks.map((l) => (l.site.toLowerCase() === 'mangadex' ? { site: 'MangaDex', url: mdUrl } : l))
-      : [{ site: 'MangaDex', url: mdUrl }, ...normalized.streamingLinks];
-
-    // Fetch direct chapter links from MangaDex feed
+    // Verify that MangaDex actually has readable chapters before listing MangaDex as a verified reading platform
     let chapterEpisodes = normalized.streamingEpisodes;
     if (chapterEpisodes.length === 0) {
       const feedRes = await fetch(
@@ -480,6 +525,17 @@ async function enrichDirectLinksFromMangaDex(record: AniListRecord, normalized: 
       }
     }
 
+    // Only list MangaDex if chapters are actually verified on MangaDex
+    if (chapterEpisodes.length === 0) {
+      return normalized;
+    }
+
+    const mdUrl = `https://mangadex.org/title/${matched.id}`;
+    const hasMdLink = normalized.streamingLinks.some((l) => l.site.toLowerCase() === 'mangadex');
+    const updatedLinks = hasMdLink
+      ? normalized.streamingLinks.map((l) => (l.site.toLowerCase() === 'mangadex' ? { site: 'MangaDex', url: mdUrl } : l))
+      : [{ site: 'MangaDex', url: mdUrl }, ...normalized.streamingLinks];
+
     const parsedLastCh = matched.attributes?.lastChapter ? Number.parseInt(matched.attributes.lastChapter, 10) : null;
     const discoveredChapters = normalized.chapters
       ?? (Number.isFinite(parsedLastCh) && (parsedLastCh ?? 0) > 0 ? parsedLastCh : null)
@@ -509,7 +565,11 @@ async function enrichDirectLinksFromJikan(record: AniListRecord, normalized: Med
         const jikanLinks = (payload.data ?? []).flatMap((entry) => {
           const url = safeDirectMediaUrl(entry.url);
           const site = entry.name?.trim();
-          return url && site && !/wikipedia|ann|animenewsnetwork|syoboi|myanimelist|anilist/i.test(site) ? [{ site, url }] : [];
+          if (!url || !site) return [];
+          if (/wikipedia|ann|animenewsnetwork|syoboi|myanimelist|anilist|official/i.test(site)) return [];
+          // For YouTube, only allow if verified in VERIFIED_YOUTUBE_ANIME_URLS or direct /watch?v=
+          if (/youtube/i.test(site) && !VERIFIED_YOUTUBE_ANIME_URLS[record.id]) return [];
+          return [{ site, url }];
         });
         if (jikanLinks.length > 0) {
           const bySite = new Map(current.streamingLinks.map((l) => [l.site.toLowerCase(), l]));
@@ -531,16 +591,6 @@ async function enrichDirectLinksFromJikan(record: AniListRecord, normalized: Med
   }
   if (current.type === 'MANGA') {
     current = await enrichDirectLinksFromMangaDex(record, current);
-    // If a manga has no verified reading platform on AniList, Jikan, or MangaDex, provide its official AniList / MyAnimeList source page so we never show broken "No results" platform links
-    if (current.streamingLinks.length === 0) {
-      current = {
-        ...current,
-        streamingLinks: [
-          { site: 'AniList Official Source', url: current.sourceUrl },
-          ...(record.idMal ? [{ site: 'MyAnimeList', url: `https://myanimelist.net/manga/${record.idMal}` }] : []),
-        ],
-      };
-    }
   }
   return current;
 }

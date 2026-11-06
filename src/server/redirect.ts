@@ -263,7 +263,11 @@ export async function resolvePlatformRedirect(params: {
 
   // 1. YouTube
   if (platformLower.includes('youtube')) {
-    resolvedUrl = await resolveYouTubeEpisodeUrl(effectiveTitle, season, episode, kind);
+    if (episode === 1 && season === 1 && cleanBaseUrl && /youtube\.com\/watch\?v=/i.test(cleanBaseUrl)) {
+      resolvedUrl = cleanBaseUrl;
+    } else {
+      resolvedUrl = await resolveYouTubeEpisodeUrl(effectiveTitle, season, episode, kind);
+    }
   }
   // 2. MangaDex
   else if (platformLower.includes('mangadex')) {
@@ -281,14 +285,16 @@ export async function resolvePlatformRedirect(params: {
 
     if (exactEp) {
       resolvedUrl = exactEp.split('?')[0];
+    } else if (cleanBaseUrl && /viki\.com\/tv\//i.test(cleanBaseUrl)) {
+      resolvedUrl = `${cleanBaseUrl.split('?')[0]}#episodes`;
     } else {
       const tvUrls = await searchWebForUrls(`site:viki.com/tv "${effectiveTitle}"`, /viki\.com\/tv\/\d+c/i);
       const matchingTv = tvUrls.find((u) => u.toLowerCase().includes(titleSlug.split('-')[0] ?? '')) ?? tvUrls[0];
-      resolvedUrl = matchingTv ? `${matchingTv.split('?')[0]}#episodes` : `https://www.viki.com/search?q=${encodeURIComponent(effectiveTitle)}`;
+      resolvedUrl = matchingTv ? `${matchingTv.split('?')[0]}#episodes` : (cleanBaseUrl ?? `https://www.viki.com/search?q=${encodeURIComponent(effectiveTitle)}`);
     }
   }
   // 4. iQIYI
-  else if (platformLower.includes('iqiyi') || platformLower === 'iq.com') {
+  else if (platformLower.includes('iqiyi') || platformLower === 'iq.com' || platformLower === 'iq') {
     const playUrls = await searchWebForUrls(
       `site:iq.com/play "${effectiveTitle}" "Episode ${episode}"`,
       /iq\.com\/play\//i,
@@ -302,27 +308,34 @@ export async function resolvePlatformRedirect(params: {
       const urlObj = new URL(matchingPlay);
       urlObj.searchParams.set('lang', 'en_us');
       resolvedUrl = urlObj.toString();
+    } else if (cleanBaseUrl && /iq\.com\/(?:album|play)\//i.test(cleanBaseUrl)) {
+      resolvedUrl = cleanBaseUrl;
     } else {
       const albumUrls = await searchWebForUrls(`site:iq.com/album "${effectiveTitle}"`, /iq\.com\/album\//i);
-      resolvedUrl = albumUrls[0] ?? `https://www.iq.com/search?query=${encodeURIComponent(effectiveTitle)}`;
+      resolvedUrl = albumUrls[0] ?? cleanBaseUrl ?? `https://www.iq.com/search?query=${encodeURIComponent(effectiveTitle)}`;
     }
   }
   // 5. GagaOOLala
   else if (platformLower.includes('gagaoolala')) {
-    const gagaUrls = await searchWebForUrls(
-      `site:gagaoolala.com/en/videos "${effectiveTitle}"`,
-      /gagaoolala\.com\/en\/videos\/\d+\/[a-z0-9-]+/i,
-    );
-    const match = gagaUrls.find((u) => u.toLowerCase().includes(titleSlug.split('-')[0] ?? '')) ?? gagaUrls[0];
-    if (match) {
-      const baseVideoUrl = match.split('?')[0].replace(/-e\d+$/i, '');
-      resolvedUrl = `${baseVideoUrl}-e${String(episode).padStart(2, '0')}`;
+    if (cleanBaseUrl && /gagaoolala\.com\/en\/videos\/\d+\//i.test(cleanBaseUrl)) {
+      const baseVideoUrl = cleanBaseUrl.split('?')[0].replace(/-e\d+$/i, '');
+      resolvedUrl = episode > 1 ? `${baseVideoUrl}-e${String(episode).padStart(2, '0')}` : cleanBaseUrl;
     } else {
-      resolvedUrl = `https://www.gagaoolala.com/en/search?q=${encodeURIComponent(effectiveTitle)}`;
+      const gagaUrls = await searchWebForUrls(
+        `site:gagaoolala.com/en/videos "${effectiveTitle}"`,
+        /gagaoolala\.com\/en\/videos\/\d+\/[a-z0-9-]+/i,
+      );
+      const match = gagaUrls.find((u) => u.toLowerCase().includes(titleSlug.split('-')[0] ?? '')) ?? gagaUrls[0];
+      if (match) {
+        const baseVideoUrl = match.split('?')[0].replace(/-e\d+$/i, '');
+        resolvedUrl = `${baseVideoUrl}-e${String(episode).padStart(2, '0')}`;
+      } else {
+        resolvedUrl = cleanBaseUrl ?? `https://www.gagaoolala.com/en/search?q=${encodeURIComponent(effectiveTitle)}`;
+      }
     }
   }
   // 6. WeTV
-  else if (platformLower.includes('wetv')) {
+  else if (platformLower.includes('wetv') || platformLower.includes('tencent')) {
     const wetvUrls = await searchWebForUrls(
       `site:wetv.vip/en/play "${effectiveTitle}" "EP${episode}"`,
       /wetv\.vip\/en\/play\//i,
@@ -330,7 +343,7 @@ export async function resolvePlatformRedirect(params: {
     const match =
       wetvUrls.find((u) => new RegExp(`EP0*${episode}\\b`, 'i').test(u) && !/teaser|trailer|clip/i.test(u)) ??
       wetvUrls[0];
-    resolvedUrl = match ?? `https://wetv.vip/en/search/${encodeURIComponent(effectiveTitle)}`;
+    resolvedUrl = match ?? cleanBaseUrl ?? `https://wetv.vip/en/search/${encodeURIComponent(effectiveTitle)}`;
   }
   // 7. Crunchyroll
   else if (platformLower.includes('crunchyroll')) {
@@ -340,7 +353,7 @@ export async function resolvePlatformRedirect(params: {
     );
     if (watchUrls[0]) {
       resolvedUrl = watchUrls[0];
-    } else if (cleanBaseUrl && /crunchyroll\.com\/series\//i.test(cleanBaseUrl)) {
+    } else if (cleanBaseUrl) {
       resolvedUrl = cleanBaseUrl;
     } else {
       const seriesUrls = await searchWebForUrls(`site:crunchyroll.com/series "${effectiveTitle}"`, /crunchyroll\.com\/series\//i);
@@ -353,22 +366,28 @@ export async function resolvePlatformRedirect(params: {
       resolvedUrl = cleanBaseUrl;
     } else {
       const nfUrls = await searchWebForUrls(`site:netflix.com/title "${effectiveTitle}"`, /netflix\.com\/(?:[a-z-]+\/)?title\/\d+/i);
-      resolvedUrl = nfUrls[0] ?? `https://www.netflix.com/search?q=${encodeURIComponent(effectiveTitle)}`;
+      resolvedUrl = nfUrls[0] ?? cleanBaseUrl ?? `https://www.netflix.com/search?q=${encodeURIComponent(effectiveTitle)}`;
     }
   }
   // 9. Bilibili
   else if (platformLower.includes('bilibili')) {
-    const biliUrls = await searchWebForUrls(
-      `site:bilibili.tv/en/play "${effectiveTitle}"`,
-      /bilibili\.tv\/en\/play\/\d+/i,
-    );
-    resolvedUrl = biliUrls[0] ?? `https://www.bilibili.tv/en/search-result?q=${encodeURIComponent(`${effectiveTitle} Episode ${episode}`)}`;
+    if (cleanBaseUrl && /bilibili\.(?:tv|com)\//i.test(cleanBaseUrl)) {
+      resolvedUrl = cleanBaseUrl;
+    } else {
+      const biliUrls = await searchWebForUrls(
+        `site:bilibili.tv/en/play "${effectiveTitle}"`,
+        /bilibili\.tv\/en\/play\/\d+/i,
+      );
+      resolvedUrl = biliUrls[0] ?? `https://www.bilibili.tv/en/search-result?q=${encodeURIComponent(`${effectiveTitle} Episode ${episode}`)}`;
+    }
   }
   // 10. Lezhin
   else if (platformLower.includes('lezhin')) {
-    const comicMatch = cleanBaseUrl?.match(/lezhinus\.com\/en\/comic\/([a-z0-9_-]+)/i);
+    const comicMatch = cleanBaseUrl?.match(/lezhin(?:us)?\.com\/([a-z]{2})\/comic\/([a-z0-9_-]+)/i);
     if (comicMatch) {
-      resolvedUrl = `https://www.lezhinus.com/en/comic/${comicMatch[1]}/${episode}`;
+      resolvedUrl = `https://www.lezhinus.com/${comicMatch[1]}/comic/${comicMatch[2]}/${episode}`;
+    } else if (cleanBaseUrl) {
+      resolvedUrl = cleanBaseUrl;
     } else {
       const lzUrls = await searchWebForUrls(`site:lezhinus.com/en/comic "${effectiveTitle}"`, /lezhinus\.com\/en\/comic\/[a-z0-9_-]+/i);
       const slugMatch = lzUrls[0]?.match(/lezhinus\.com\/en\/comic\/([a-z0-9_-]+)/i);
@@ -380,35 +399,37 @@ export async function resolvePlatformRedirect(params: {
   // 11. Tapas
   else if (platformLower.includes('tapas')) {
     if (cleanBaseUrl && /tapas\.io\/series\//i.test(cleanBaseUrl)) {
-      resolvedUrl = `${cleanBaseUrl.replace(/\/$/, '')}/info`;
+      resolvedUrl = `${cleanBaseUrl.replace(/\/info$/, '').replace(/\/$/, '')}/info`;
     } else {
       const tpUrls = await searchWebForUrls(`site:tapas.io/series "${effectiveTitle}"`, /tapas\.io\/series\/[a-z0-9_-]+/i);
-      resolvedUrl = tpUrls[0] ?? `https://tapas.io/search?q=${encodeURIComponent(effectiveTitle)}`;
+      resolvedUrl = tpUrls[0] ?? cleanBaseUrl ?? `https://tapas.io/search?q=${encodeURIComponent(effectiveTitle)}`;
     }
   }
   // 12. Tappytoon
   else if (platformLower.includes('tappytoon')) {
-    if (cleanBaseUrl && /tappytoon\.com\/en\/book\//i.test(cleanBaseUrl)) {
+    if (cleanBaseUrl && /tappytoon\.com\/en\/(?:book|comics)\//i.test(cleanBaseUrl)) {
       resolvedUrl = cleanBaseUrl;
     } else {
       const ttUrls = await searchWebForUrls(`site:tappytoon.com/en/book "${effectiveTitle}"`, /tappytoon\.com\/en\/book\/[a-z0-9_-]+/i);
-      resolvedUrl = ttUrls[0] ?? `https://www.tappytoon.com/en/search?q=${encodeURIComponent(effectiveTitle)}`;
+      resolvedUrl = ttUrls[0] ?? cleanBaseUrl ?? `https://www.tappytoon.com/en/search?q=${encodeURIComponent(effectiveTitle)}`;
     }
   }
   // 13. Manta
   else if (platformLower.includes('manta')) {
-    if (cleanBaseUrl && /manta\.net\/en\/series\//i.test(cleanBaseUrl)) {
+    if (cleanBaseUrl && /manta\.net\/(?:en\/)?series\//i.test(cleanBaseUrl)) {
       resolvedUrl = cleanBaseUrl;
     } else {
       const mantaUrls = await searchWebForUrls(`site:manta.net/en/series "${effectiveTitle}"`, /manta\.net\/en\/series\/[a-z0-9_-]+/i);
-      resolvedUrl = mantaUrls[0] ?? `https://manta.net/en/search?query=${encodeURIComponent(effectiveTitle)}`;
+      resolvedUrl = mantaUrls[0] ?? cleanBaseUrl ?? `https://manta.net/en/search?query=${encodeURIComponent(effectiveTitle)}`;
     }
   }
   // 14. Webtoon
   else if (platformLower.includes('webtoon')) {
     const titleNoMatch = cleanBaseUrl?.match(/title_no=(\d+)/i);
     if (titleNoMatch && cleanBaseUrl) {
-      resolvedUrl = cleanBaseUrl.replace(/\/list\?/i, '/viewer?') + `&episode_no=${episode}`;
+      resolvedUrl = episode > 1 ? cleanBaseUrl.replace(/\/list\?/i, '/viewer?') + `&episode_no=${episode}` : cleanBaseUrl;
+    } else if (cleanBaseUrl) {
+      resolvedUrl = cleanBaseUrl;
     } else {
       const wtUrls = await searchWebForUrls(`site:webtoons.com/en "${effectiveTitle}"`, /webtoons\.com\/en\/[^?]+\/list\?title_no=\d+/i);
       if (wtUrls[0]) {
@@ -418,7 +439,7 @@ export async function resolvePlatformRedirect(params: {
       }
     }
   }
-  // 15. Any other official platform (Watcha, Heavenly, SuBLime, Seven Seas, etc.)
+  // 15. Any other official platform (Watcha, Heavenly, SuBLime, Seven Seas, RetroCrush, OceanVeil, Paramount+, Hulu, etc.)
   else if (cleanBaseUrl) {
     resolvedUrl = cleanBaseUrl;
   } else {
