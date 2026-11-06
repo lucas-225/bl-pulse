@@ -8,5 +8,5 @@ coverage/
 !.env.example
 .aistudio/
 *.zip
-
-public/assets/aistudio/
+public/assets/aistudio/Screenshot*
+public/assets/aistudio/Paste*

@@ -5,10 +5,34 @@ let pool: mysql.Pool | null = null;
 let dbInitialized = false;
 const memoryMeta = new Map<string, string>();
 
+export function normalizeDatabaseUrl(rawUrl: string): string {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return '';
+  try {
+    const parsed = new URL(trimmed);
+    // In TiDB Cloud / MySQL, '/sys' is a read-only system schema.
+    // Rewrite '/sys' or empty path to '/test' (TiDB Serverless default writable DB).
+    if (!parsed.pathname || parsed.pathname === '/' || parsed.pathname === '/sys') {
+      parsed.pathname = '/test';
+    }
+    parsed.searchParams.delete('ssl-mode');
+    parsed.searchParams.delete('sslaccept');
+    return parsed.toString();
+  } catch {
+    return trimmed.replace(/\/sys(\?|$)/, '/test$1');
+  }
+}
+
 export function getDbPool(): mysql.Pool | null {
   if (pool) return pool;
-  const url = process.env.DATABASE_URL?.trim();
-  if (!url) return null;
+  const rawUrl = process.env.DATABASE_URL?.trim();
+  if (!rawUrl || rawUrl.includes('<PASSWORD>')) return null;
+
+  const url = normalizeDatabaseUrl(rawUrl);
+  const needsTls =
+    url.includes('tidbcloud.com') ||
+    rawUrl.includes('ssl') ||
+    process.env.DB_SSL === 'true';
 
   try {
     pool = mysql.createPool({
@@ -17,6 +41,14 @@ export function getDbPool(): mysql.Pool | null {
       connectionLimit: 5,
       queueLimit: 0,
       enableKeepAlive: true,
+      ...(needsTls
+        ? {
+            ssl: {
+              minVersion: 'TLSv1.2',
+              rejectUnauthorized: true,
+            },
+          }
+        : {}),
     });
     return pool;
   } catch {
@@ -30,6 +62,8 @@ export async function initDatabase(): Promise<boolean> {
   if (dbInitialized) return true;
 
   try {
+    await db.execute(`CREATE DATABASE IF NOT EXISTS test`);
+    await db.query(`USE test`);
     await db.execute(`
       CREATE TABLE IF NOT EXISTS bl_series (
         id VARCHAR(191) PRIMARY KEY,
