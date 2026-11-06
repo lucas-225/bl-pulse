@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
-import { Link, NavLink, useNavigate } from 'react-router-dom';
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
   ArrowRight,
   ArrowUpRight,
   ChevronRight,
-  Lock,
   Megaphone,
   Radio,
   RefreshCw,
@@ -22,7 +21,7 @@ const MARK_URL = '/assets/aistudio/blpulse-mark_2739ad76.png';
 export interface UnifiedRecommendation {
   key: string;
   title: string;
-  category: 'Live Action' | 'Anime' | 'Manga';
+  category: 'Live Action' | 'Anime' | 'Comic';
   subtitle: string;
   coverUrl?: string | null;
   path: string;
@@ -271,6 +270,8 @@ export function Header({
   const [searchingMedia, setSearchingMedia] = useState(false);
   const containerRef = useRef<HTMLFormElement>(null);
   const navigate = useNavigate();
+  const location = useLocation();
+  const isComicActive = location.pathname.startsWith('/comic') || location.pathname.startsWith('/manga');
 
   useEffect(() => {
     function handleOutsideClick(event: MouseEvent) {
@@ -334,10 +335,10 @@ export function Header({
       return {
         key: `${item.type}-${item.id}`,
         title: item.displayTitle,
-        category: item.type === 'ANIME' ? ('Anime' as const) : ('Manga' as const),
+        category: item.type === 'ANIME' ? ('Anime' as const) : ('Comic' as const),
         subtitle: [item.format, item.startYear, item.status?.replaceAll('_', ' ')].filter(Boolean).join(' · '),
         coverUrl: item.coverImage,
-        path: `/${item.type === 'ANIME' ? 'anime' : 'manga'}/${item.id}${qs ? `?${qs}` : ''}`,
+        path: `/${item.type === 'ANIME' ? 'anime' : 'comic'}/${item.id}${qs ? `?${qs}` : ''}`,
       };
     });
 
@@ -377,7 +378,7 @@ export function Header({
         <nav className="primary-nav" aria-label="Main navigation">
           <NavLink to="/discover" end className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Live action</NavLink>
           <NavLink to="/anime" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Anime</NavLink>
-          <NavLink to="/manga" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Manga</NavLink>
+          <NavLink to="/comic" className={() => isComicActive ? 'nav-link active' : 'nav-link'}>Comic</NavLink>
         </nav>
         <div className="topbar-actions">
           <form
@@ -389,14 +390,14 @@ export function Header({
           >
             <Search size={16} aria-hidden="true" />
             <input
-              aria-label="Search all BL series, anime, and manga"
+              aria-label="Search all BL series, anime, and comics"
               value={query}
               onFocus={() => setOpenDropdown(true)}
               onChange={(event) => {
                 setQuery(event.target.value);
                 setOpenDropdown(true);
               }}
-              placeholder="Search BL series, anime & manga…"
+              placeholder="Search BL series, anime & comics…"
             />
             {query && (
               <button
@@ -414,7 +415,7 @@ export function Header({
             {openDropdown && query.trim().length > 0 && (
               <div
                 role="listbox"
-                aria-label="Search recommendations across Live Action, Anime, and Manga"
+                aria-label="Search recommendations across Live Action, Anime, and Comic"
                 style={{
                   position: 'absolute',
                   top: 'calc(100% + 8px)',
@@ -520,12 +521,12 @@ export function Header({
                         cursor: 'pointer',
                       }}
                     >
-                      See all results for “{query.trim()}” across Live Action, Anime &amp; Manga
+                      See all results for “{query.trim()}” across Live Action, Anime &amp; Comic
                     </button>
                   </>
                 ) : (
                   <div style={{ padding: '14px 12px', fontSize: '0.84rem', color: 'rgba(226, 214, 248, 0.75)' }}>
-                    {searchingMedia ? 'Searching Live Action, Anime & Manga…' : `Press Enter to search “${query.trim()}” across all categories`}
+                    {searchingMedia ? 'Searching Live Action, Anime & Comic…' : `Press Enter to search “${query.trim()}” across all categories`}
                   </div>
                 )}
               </div>
@@ -615,14 +616,14 @@ function MixedMediaCard({ item }: { item: MediaTitle }) {
   if (item.isAdult) params.set('mature', '1');
   if ((item.boysLoveRank ?? 0) < DEFAULT_MINIMUM_BL_TAG_RANK) params.set('tagRank', 'all');
   const query = params.toString();
-  const detailPath = `/${item.type === 'ANIME' ? 'anime' : 'manga'}/${item.id}${query ? `?${query}` : ''}`;
+  const detailPath = `/${item.type === 'ANIME' ? 'anime' : 'comic'}/${item.id}${query ? `?${query}` : ''}`;
   const statusMap: SeriesStatus =
     item.status === 'RELEASING'
       ? 'airing'
       : item.status === 'NOT_YET_RELEASED'
         ? 'upcoming'
         : 'completed';
-  const categoryLabel = item.type === 'ANIME' ? 'BL Anime' : 'BL Manga';
+  const categoryLabel = item.type === 'ANIME' ? 'BL Anime' : 'BL Comic';
 
   return (
     <Link className="series-card" to={detailPath} style={hueStyle}>
@@ -709,18 +710,12 @@ export function Footer() {
       <Link className="footer-brand" to="/"><span className="brand-mark" style={{ width: '26px', height: '26px', borderRadius: '8px' }}><img src={MARK_URL} alt="BL Pulse logo" style={{ width: '24px', height: '24px' }} /></span> BL PULSE</Link>
       <p>Find the story. Follow the source. Watch on the official platform.</p>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'center' }}>
-        <a href="https://anilist.co/" target="_blank" rel="noopener noreferrer">Anime &amp; Manga Live Data: AniList</a>
-        <span>·</span>
-        <a href="/api/export" download="blpulse-catalog.json">Backup Catalog JSON</a>
-        <span>·</span>
-        <Link to="/admin" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-          <Lock size={12} /> Admin Control
-        </Link>
+        <a href="https://anilist.co/" target="_blank" rel="noopener noreferrer">Anime &amp; Comic Live Data: AniList</a>
       </div>
       <span className="footer-note" style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', marginTop: '6px' }}>
         <ShieldCheck size={15} style={{ flexShrink: 0, marginTop: '2px', color: '#c792ff' }} />
         <span>
-          <strong>Copyright &amp; DMCA Safe-Harbor Notice:</strong> BL Pulse operates strictly as an independent metadata directory and legal discovery guide. We NEVER host, store, or stream raw video files or manga scans on our servers. All watch and read actions redirect directly (HTTP 302) to official licensed rights-holders (YouTube, Viki, iQIYI, GagaOOLala, WeTV, Crunchyroll, Netflix, MangaDex, Tapas, Lezhin). All titles, posters, and trademarks belong to their respective studios and licensors.
+          <strong>Copyright &amp; DMCA Safe-Harbor Notice:</strong> BL Pulse operates strictly as an independent metadata directory and legal discovery guide. We NEVER host, store, or stream raw video files or comic scans on our servers. All watch and read actions redirect directly (HTTP 302) to official licensed rights-holders (YouTube, Viki, iQIYI, GagaOOLala, WeTV, Crunchyroll, Netflix, MangaDex, Tapas, Lezhin). All titles, posters, and trademarks belong to their respective studios and licensors.
         </span>
       </span>
     </footer>

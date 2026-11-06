@@ -38,6 +38,7 @@ import {
   triggerMarketAutoSync,
   verifyAdminPassword,
 } from './api';
+import { resolvePlatformEpisodeUrl } from './components';
 
 const STORAGE_KEY = 'bl_pulse_admin_pw';
 
@@ -93,7 +94,7 @@ export function AdminPage({
     catalog.monetization ?? DEFAULT_MONETIZATION,
   );
 
-  // Market Auto-Sync state
+  // Auto Sync state
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncResult, setSyncResult] = useState<MarketSyncResult | null>(null);
   const [bannerNotice, setBannerNotice] = useState('');
@@ -136,10 +137,10 @@ export function AdminPage({
       setDbReady(res.databaseReady);
       setAnalytics(res.analytics);
       setMonetization(res.monetization);
-    } catch (err) {
+    } catch {
       sessionStorage.removeItem(STORAGE_KEY);
       setAuthenticatedPw(null);
-      setAuthError(err instanceof Error ? err.message : 'Invalid password.');
+      setAuthError('Invalid owner password. Please check your ADMIN_PASSWORD.');
     } finally {
       setAuthBusy(false);
     }
@@ -169,7 +170,7 @@ export function AdminPage({
     }
   }
 
-  async function handleMarketAutoSync() {
+  async function handleAutoSync() {
     if (!authenticatedPw || syncBusy) return;
     setSyncBusy(true);
     setBannerNotice('');
@@ -179,7 +180,7 @@ export function AdminPage({
       onCatalogUpdated(res.catalog);
       setBannerNotice(res.summary);
     } catch (err) {
-      setBannerNotice(err instanceof Error ? err.message : 'Market Auto-Sync failed.');
+      setBannerNotice(err instanceof Error ? err.message : 'Auto Sync failed.');
     } finally {
       setSyncBusy(false);
     }
@@ -331,7 +332,7 @@ export function AdminPage({
 
   if (!authenticatedPw) {
     return (
-      <div className="page-content" style={{ maxWidth: '520px', margin: '64px auto' }}>
+      <div className="page-content" style={{ maxWidth: '480px', margin: '64px auto' }}>
         <section
           style={{
             padding: '32px',
@@ -343,11 +344,11 @@ export function AdminPage({
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', color: '#c792ff' }}>
             <Lock size={20} />
-            <span className="eyebrow" style={{ margin: 0 }}>BL PULSE · OWNER CONTROL CENTER</span>
+            <span className="eyebrow" style={{ margin: 0 }}>BL PULSE · OWNER STUDIO</span>
           </div>
-          <h1 style={{ fontSize: '1.75rem', margin: '0 0 10px' }}>Admin &amp; Monetization Login</h1>
-          <p style={{ color: 'rgba(226, 214, 248, 0.76)', fontSize: '0.92rem', lineHeight: 1.55, marginBottom: '20px' }}>
-            Public visitors never need to log in. Enter your owner password to access Market Auto-Sync, Series CRUD, Affiliate Monetization, Display Ads, and Click Analytics.
+          <h1 style={{ fontSize: '1.7rem', margin: '0 0 10px' }}>Owner Access</h1>
+          <p style={{ color: 'rgba(226, 214, 248, 0.76)', fontSize: '0.9rem', lineHeight: 1.55, marginBottom: '20px' }}>
+            Enter your private owner password to manage the Live-Action catalog, run Auto Sync, configure affiliate links &amp; display ads, and view redirect analytics.
           </p>
           {authError && (
             <div
@@ -366,12 +367,13 @@ export function AdminPage({
           )}
           <form onSubmit={submitLogin} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.84rem', fontWeight: 600 }}>
-              <span>Admin Password (default: <code>blpulse2026</code>)</span>
+              <span>Owner Password</span>
               <input
                 type="password"
                 value={passwordInput}
                 onChange={(e) => setPasswordInput(e.target.value)}
-                placeholder="Enter ADMIN_PASSWORD…"
+                placeholder="Enter your owner password…"
+                autoComplete="current-password"
                 style={{
                   padding: '12px 14px',
                   borderRadius: '10px',
@@ -384,7 +386,7 @@ export function AdminPage({
             </label>
             <button type="submit" className="button button-primary" disabled={authBusy} style={{ justifyContent: 'center' }}>
               {authBusy ? <LoaderCircle size={17} className="spin" /> : <ShieldCheck size={17} />}
-              {authBusy ? 'Verifying…' : 'Unlock Admin Control Panel'}
+              {authBusy ? 'Verifying…' : 'Unlock Owner Studio'}
             </button>
           </form>
         </section>
@@ -407,13 +409,13 @@ export function AdminPage({
       >
         <div>
           <div className="eyebrow" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <ShieldCheck size={15} /> SELF-OWNED PORTAL · COPYRIGHT-SAFE · MONETIZED
+            <ShieldCheck size={15} /> OWNER CONTROL PANEL · SIMPLE &amp; AUTOMATED
           </div>
-          <h1 style={{ fontSize: 'clamp(1.7rem, 2.6vw, 2.35rem)', margin: '6px 0' }}>
-            BLPulse Owner &amp; Monetization Studio
+          <h1 style={{ fontSize: 'clamp(1.65rem, 2.5vw, 2.25rem)', margin: '6px 0' }}>
+            BLPulse Admin Studio
           </h1>
-          <p style={{ margin: 0, color: 'rgba(226, 214, 248, 0.76)', fontSize: '0.93rem' }}>
-            AniList powers live BL Anime &amp; Manga automatically · Self-hosted database powers {catalog.series.length} verified BL Live-Action series.
+          <p style={{ margin: 0, color: 'rgba(226, 214, 248, 0.78)', fontSize: '0.92rem' }}>
+            <strong>BL Anime &amp; BL Comics</strong> refresh episodes &amp; chapters automatically live from AniList &amp; MangaDex · <strong>BL Live-Action ({catalog.series.length} series)</strong> is managed below.
           </p>
         </div>
 
@@ -424,7 +426,7 @@ export function AdminPage({
             className="button button-secondary"
             style={{ fontSize: '0.84rem' }}
           >
-            <Download size={15} /> Export JSON Backup
+            <Download size={15} /> Export Backup JSON
           </a>
           <button type="button" className="button button-secondary" onClick={logout} style={{ fontSize: '0.84rem' }}>
             Lock Admin
@@ -460,7 +462,7 @@ export function AdminPage({
         </div>
       )}
 
-      {/* One-Click Market Auto-Sync Hero Card */}
+      {/* Auto Sync Card + Detailed Report */}
       <section
         style={{
           padding: '24px 26px',
@@ -468,40 +470,215 @@ export function AdminPage({
           background: 'linear-gradient(135deg, rgba(35, 22, 58, 0.94), rgba(17, 13, 28, 0.97))',
           border: '1px solid rgba(199, 146, 255, 0.36)',
           marginBottom: '26px',
-          display: 'flex',
-          flexWrap: 'wrap',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          gap: '20px',
         }}
       >
-        <div style={{ maxWidth: '720px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#e9d5ff', fontSize: '0.76rem', fontWeight: 700, letterSpacing: '0.08em' }}>
-            <WandSparkles size={15} /> ONE-CLICK MARKET AUTO-SYNC ENGINE
-          </div>
-          <h2 style={{ margin: '6px 0 8px', fontSize: '1.35rem' }}>
-            Discover &amp; Sync Newly Announced and Airing BL Live-Action Dramas
-          </h2>
-          <p style={{ margin: 0, color: 'rgba(226, 214, 248, 0.8)', fontSize: '0.88rem', lineHeight: 1.55 }}>
-            Scans the 2025–2026 BL drama market (GMMTV, Mandee, IdolFactory, iQIYI, Viki, GagaOOLala, WeTV) with Gemini Search Grounding + TVMaze poster lookup to populate synopses, posters, release years, and verified Episode [1/4] redirect links.
-          </p>
-          {syncResult && (
-            <div style={{ marginTop: '12px', fontSize: '0.82rem', color: '#d8b4fe' }}>
-              <strong>Last Sync ({syncResult.sourceUsed}):</strong> Added {syncResult.added.length} new series · Updated {syncResult.updated.length} series · Total {syncResult.totalSeries} Live-Action titles.
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: '20px',
+          }}
+        >
+          <div style={{ maxWidth: '720px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#e9d5ff', fontSize: '0.76rem', fontWeight: 700, letterSpacing: '0.08em' }}>
+              <WandSparkles size={15} /> LIVE-ACTION CATALOG &amp; EPISODE SYNC
             </div>
-          )}
+            <h2 style={{ margin: '6px 0 8px', fontSize: '1.35rem' }}>
+              Auto Sync Live-Action Series &amp; Episodes
+            </h2>
+            <p style={{ margin: 0, color: 'rgba(226, 214, 248, 0.8)', fontSize: '0.88rem', lineHeight: 1.55 }}>
+              Click <strong>Auto Sync</strong> to discover newly released BL live-action dramas, enrich posters &amp; synopses, and refresh verified episode redirect links across existing airing series. <em>(Note: Anime and Comics sync live automatically from AniList &amp; MangaDex—no manual sync needed.)</em>
+            </p>
+          </div>
+
+          <button
+            type="button"
+            className="button button-primary"
+            onClick={() => void handleAutoSync()}
+            disabled={syncBusy}
+            style={{ padding: '13px 26px', fontSize: '0.95rem' }}
+          >
+            {syncBusy ? <LoaderCircle size={18} className="spin" /> : <RefreshCw size={18} />}
+            {syncBusy ? 'Syncing Catalog & Episodes…' : 'Auto Sync'}
+          </button>
         </div>
 
-        <button
-          type="button"
-          className="button button-primary"
-          onClick={() => void handleMarketAutoSync()}
-          disabled={syncBusy}
-          style={{ padding: '13px 22px', fontSize: '0.92rem' }}
-        >
-          {syncBusy ? <LoaderCircle size={18} className="spin" /> : <RefreshCw size={18} />}
-          {syncBusy ? 'Scanning BL Market & Grounding…' : 'One-Click Market Auto-Sync'}
-        </button>
+        {/* Detailed Auto Sync Report Log */}
+        {syncResult && (
+          <div
+            style={{
+              marginTop: '22px',
+              paddingTop: '20px',
+              borderTop: '1px solid rgba(199, 146, 255, 0.25)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '20px',
+            }}
+          >
+            <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+              <div>
+                <div className="eyebrow" style={{ color: '#86efac' }}>AUTO SYNC REPORT · {new Date(syncResult.syncedAt).toLocaleTimeString()}</div>
+                <h3 style={{ margin: '4px 0 0', fontSize: '1.15rem' }}>
+                  {syncResult.added.length} New Series Added · {syncResult.updated.length} Existing Series &amp; Episode Sets Updated ({syncResult.totalSeries} Total Series)
+                </h3>
+              </div>
+              <span style={{ fontSize: '0.78rem', color: 'rgba(226, 214, 248, 0.72)' }}>
+                Source: {syncResult.sourceUsed}
+              </span>
+            </div>
+
+            {/* 1. Newly Added Series Report */}
+            <div>
+              <h4 style={{ margin: '0 0 10px', fontSize: '0.92rem', color: '#e9d5ff', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                1. Newly Added Series ({syncResult.added.length})
+              </h4>
+              {syncResult.added.length > 0 ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '12px' }}>
+                  {syncResult.added.map((s) => {
+                    const primaryPf = s.platforms[0];
+                    const ep1Redirect = resolvePlatformEpisodeUrl(
+                      primaryPf?.name ?? 'YouTube',
+                      primaryPf?.url,
+                      s.title,
+                      1,
+                      'series',
+                    );
+                    return (
+                      <div
+                        key={s.id}
+                        style={{
+                          padding: '14px',
+                          borderRadius: '12px',
+                          background: 'rgba(34, 197, 94, 0.08)',
+                          border: '1px solid rgba(34, 197, 94, 0.32)',
+                          display: 'flex',
+                          gap: '12px',
+                        }}
+                      >
+                        {s.coverUrl && (
+                          <img
+                            src={s.coverUrl}
+                            alt={s.title}
+                            style={{ width: '64px', height: '90px', objectFit: 'cover', borderRadius: '8px', flexShrink: 0 }}
+                          />
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <strong style={{ fontSize: '0.95rem', color: '#fff' }}>{s.title}</strong>
+                            <span style={{ padding: '2px 7px', borderRadius: '4px', background: 'rgba(34, 197, 94, 0.22)', color: '#86efac', fontSize: '0.68rem', fontWeight: 700 }}>
+                              NEWLY ADDED
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '0.76rem', color: 'rgba(226, 214, 248, 0.78)', marginTop: '3px' }}>
+                            {s.country} · {s.year ?? 2025} · {s.status.toUpperCase()} · {s.episodes ?? 12} Episodes · Genres: {s.genres.join(', ')}
+                          </div>
+                          {s.synopsis && (
+                            <p style={{ margin: '6px 0', fontSize: '0.76rem', color: 'rgba(226, 214, 248, 0.72)', lineHeight: 1.45 }}>
+                              {s.synopsis}
+                            </p>
+                          )}
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
+                            <Link
+                              to={`/series/${encodeURIComponent(s.id)}`}
+                              style={{ fontSize: '0.75rem', color: '#c084fc', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            >
+                              Open Series Page <ArrowUpRight size={12} />
+                            </Link>
+                            <a
+                              href={ep1Redirect}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ fontSize: '0.75rem', color: '#86efac', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            >
+                              Test Ep 1 Redirect ({primaryPf?.name ?? 'Platform'}) <ArrowUpRight size={12} />
+                            </a>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{ padding: '12px 14px', borderRadius: '10px', background: 'rgba(255,255,255,0.04)', fontSize: '0.84rem', color: 'rgba(226, 214, 248, 0.78)' }}>
+                  All latest 2025–2026 market dramas are already present in your catalog ({syncResult.totalSeries} series). See below for the existing series &amp; episodes verified during this sync.
+                </div>
+              )}
+            </div>
+
+            {/* 2. Updated Existing Series & Episodes Report */}
+            <div>
+              <h4 style={{ margin: '0 0 10px', fontSize: '0.92rem', color: '#e9d5ff', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                2. Existing Series &amp; Episodes Verified / Updated ({syncResult.updatedDetails?.length ?? syncResult.updated.length})
+              </h4>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '12px', maxHeight: '420px', overflowY: 'auto' }}>
+                {(syncResult.updatedDetails ?? syncResult.updated.map((series) => ({ series, changes: [`Verified ${series.episodes ?? 12} episodes & platform redirects`] }))).map(
+                  ({ series: s, changes }) => {
+                    const primaryPf = s.platforms[0];
+                    const ep1Redirect = resolvePlatformEpisodeUrl(
+                      primaryPf?.name ?? 'YouTube',
+                      primaryPf?.url,
+                      s.title,
+                      1,
+                      'series',
+                    );
+                    return (
+                      <div
+                        key={s.id}
+                        style={{
+                          padding: '13px 14px',
+                          borderRadius: '12px',
+                          background: 'rgba(155, 92, 255, 0.09)',
+                          border: '1px solid rgba(199, 146, 255, 0.26)',
+                          display: 'flex',
+                          gap: '12px',
+                        }}
+                      >
+                        {s.coverUrl && (
+                          <img
+                            src={s.coverUrl}
+                            alt={s.title}
+                            style={{ width: '54px', height: '76px', objectFit: 'cover', borderRadius: '7px', flexShrink: 0 }}
+                          />
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                            <strong style={{ fontSize: '0.9rem', color: '#fff' }}>{s.title}</strong>
+                            <span style={{ fontSize: '0.7rem', color: '#c084fc', fontWeight: 700 }}>
+                              {s.country} · {s.episodes ?? 12} EPS
+                            </span>
+                          </div>
+                          <ul style={{ margin: '6px 0 8px', paddingLeft: '16px', fontSize: '0.76rem', color: 'rgba(226, 214, 248, 0.82)', lineHeight: 1.45 }}>
+                            {changes.map((c, i) => (
+                              <li key={i}>{c}</li>
+                            ))}
+                          </ul>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                            <Link
+                              to={`/series/${encodeURIComponent(s.id)}`}
+                              style={{ fontSize: '0.74rem', color: '#e9d5ff', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            >
+                              View Series &amp; {s.episodes ?? 12} Episodes <ArrowUpRight size={12} />
+                            </Link>
+                            <a
+                              href={ep1Redirect}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ fontSize: '0.74rem', color: '#86efac', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            >
+                              Redirect ({primaryPf?.name ?? 'Platform'}) <ArrowUpRight size={12} />
+                            </a>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  },
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Navigation Tabs */}
@@ -511,14 +688,14 @@ export function AdminPage({
           onClick={() => setActiveTab('catalog')}
           className={activeTab === 'catalog' ? 'button button-primary' : 'button button-secondary'}
         >
-          <Database size={16} /> Live-Action Catalog &amp; Auto-Fill ({catalog.series.length})
+          <Database size={16} /> Live-Action Catalog ({catalog.series.length})
         </button>
         <button
           type="button"
           onClick={() => setActiveTab('monetization')}
           className={activeTab === 'monetization' ? 'button button-primary' : 'button button-secondary'}
         >
-          <Megaphone size={16} /> Monetization, Affiliates &amp; Ads
+          <Megaphone size={16} /> Monetization &amp; Ads
         </button>
         <button
           type="button"
@@ -528,7 +705,7 @@ export function AdminPage({
           }}
           className={activeTab === 'analytics' ? 'button button-primary' : 'button button-secondary'}
         >
-          <BarChart3 size={16} /> Redirect &amp; Affiliate Analytics ({analytics?.totalRedirects ?? 0})
+          <BarChart3 size={16} /> Redirect Analytics ({analytics?.totalRedirects ?? 0})
         </button>
       </div>
 
@@ -552,7 +729,7 @@ export function AdminPage({
               <div>
                 <div className="eyebrow">{editingId ? 'EDIT EXISTING SERIES' : 'ADD NEW LIVE-ACTION SERIES'}</div>
                 <h3 style={{ margin: '4px 0 0', fontSize: '1.2rem' }}>
-                  {editingId ? `Editing: ${title}` : 'Add / Edit Series + 1-Click Auto-Fill'}
+                  {editingId ? `Editing: ${title}` : 'Add / Edit Series'}
                 </h3>
               </div>
               {editingId && (
@@ -584,11 +761,11 @@ export function AdminPage({
                 className="button button-secondary"
                 onClick={() => void handleAutoFill()}
                 disabled={autoFillBusy || !title.trim()}
-                title="Auto-fill synopsis, poster, year, country & platforms using AI + TVMaze"
+                title="Auto-fill synopsis, poster, year, country & platforms"
                 style={{ height: '41px', whiteSpace: 'nowrap' }}
               >
                 {autoFillBusy ? <LoaderCircle size={15} className="spin" /> : <Sparkles size={15} />}
-                {autoFillBusy ? 'Filling…' : '1-Click Auto-Fill'}
+                {autoFillBusy ? 'Filling…' : 'Auto-Fill'}
               </button>
             </div>
 
@@ -812,7 +989,7 @@ export function AdminPage({
 
             <button type="submit" className="button button-primary" disabled={saveSeriesBusy} style={{ justifyContent: 'center', marginTop: '6px' }}>
               {saveSeriesBusy ? <LoaderCircle size={16} className="spin" /> : <CheckCircle2 size={16} />}
-              {saveSeriesBusy ? 'Saving to Database…' : editingId ? 'Update Series in Catalog' : 'Add Series to Catalog'}
+              {saveSeriesBusy ? 'Saving…' : editingId ? 'Update Series' : 'Save Series to Catalog'}
             </button>
           </form>
 
@@ -842,7 +1019,7 @@ export function AdminPage({
                   fontWeight: 700,
                 }}
               >
-                {dbReady ? 'TiDB / MySQL Synced' : 'In-Memory High-Speed Cache'}
+                {dbReady ? 'TiDB / MySQL Connected' : 'In-Memory Cache Active'}
               </span>
             </div>
 
@@ -875,7 +1052,7 @@ export function AdminPage({
                       {item.title}
                     </div>
                     <div style={{ fontSize: '0.75rem', color: 'rgba(226, 214, 248, 0.68)', marginTop: '2px' }}>
-                      {item.country} · {item.year ?? '—'} · {item.status.toUpperCase()} · {item.platforms.map((p) => p.name).join(', ')}
+                      {item.country} · {item.year ?? '—'} · {item.status.toUpperCase()} · {item.episodes ?? 12} eps · {item.platforms.map((p) => p.name).join(', ')}
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
@@ -962,7 +1139,7 @@ export function AdminPage({
             }}
           >
             <div>
-              <div className="eyebrow">STREAMING &amp; READING AFFILIATE TAGS</div>
+              <div className="eyebrow">STREAMING &amp; COMIC AFFILIATE TAGS</div>
               <h3 style={{ margin: '4px 0 6px', fontSize: '1.2rem' }}>Official Partner Referral IDs</h3>
               <p style={{ margin: 0, fontSize: '0.82rem', color: 'rgba(226, 214, 248, 0.72)' }}>
                 Automatically appended to every 302 redirect when users click to watch or read on licensed platforms.
@@ -1258,7 +1435,7 @@ export function AdminPage({
 
               <button type="submit" className="button button-primary" disabled={saveMonetizationBusy} style={{ justifyContent: 'center', marginTop: '6px' }}>
                 {saveMonetizationBusy ? <LoaderCircle size={16} className="spin" /> : <CheckCircle2 size={16} />}
-                {saveMonetizationBusy ? 'Saving Monetization Settings…' : 'Save All Monetization & Ad Settings'}
+                {saveMonetizationBusy ? 'Saving Settings…' : 'Save Monetization & Ad Settings'}
               </button>
             </div>
           </div>
@@ -1293,7 +1470,7 @@ export function AdminPage({
             <div style={{ padding: '20px', borderRadius: '16px', background: 'rgba(17, 13, 27, 0.94)', border: '1px solid rgba(199, 146, 255, 0.24)' }}>
               <div className="eyebrow">BY MEDIA CATEGORY</div>
               <div style={{ fontSize: '0.92rem', fontWeight: 700, marginTop: '10px', lineHeight: 1.6 }}>
-                Live-Action: {analytics?.byCategory.series ?? 0} · Anime: {analytics?.byCategory.anime ?? 0} · Manga: {analytics?.byCategory.manga ?? 0}
+                Live-Action: {analytics?.byCategory.series ?? 0} · Anime: {analytics?.byCategory.anime ?? 0} · Comic: {analytics?.byCategory.manga ?? 0}
               </div>
             </div>
 
@@ -1326,7 +1503,7 @@ export function AdminPage({
                 </div>
               ) : (
                 <p style={{ color: 'rgba(226, 214, 248, 0.65)', fontSize: '0.86rem' }}>
-                  Click any Watch or Read button on a Series, Anime, or Manga detail page to see live platform telemetry here.
+                  Click any Watch or Read button on a Series, Anime, or Comic detail page to see live platform telemetry here.
                 </p>
               )}
             </div>
@@ -1342,7 +1519,7 @@ export function AdminPage({
                       <div>
                         <strong style={{ fontSize: '0.88rem' }}>{t.title}</strong>
                         <span style={{ marginLeft: '8px', fontSize: '0.7rem', textTransform: 'uppercase', color: '#a78bfa' }}>
-                          {t.kind}
+                          {t.kind === 'manga' ? 'comic' : t.kind}
                         </span>
                       </div>
                       <span style={{ fontWeight: 700 }}>{t.count} clicks</span>

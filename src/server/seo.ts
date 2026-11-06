@@ -53,8 +53,9 @@ function seriesLinks(series: Series[]): string {
 }
 
 function mediaLinks(page: MediaPageResponse | undefined, kind: 'anime' | 'manga'): string {
-  if (!page?.items.length) return `<p class="seo-empty">${kind === 'anime' ? 'BL anime' : 'BL manga'} titles will appear when AniList returns a matching page. Use the controls below to retry or browse another order.</p>`;
-  return `<ul class="seo-title-list">${page.items.slice(0, 12).map((item) => { const params = new URLSearchParams(); if (item.isAdult) params.set('mature', '1'); if ((item.boysLoveRank ?? 0) < DEFAULT_MINIMUM_BL_TAG_RANK) params.set('tagRank', 'all'); const query = params.toString(); return `<li><a href="/${kind}/${item.id}${query ? `?${query}` : ''}">${escapeHtml(item.displayTitle)}</a><span>${escapeHtml(item.format ?? (kind === 'anime' ? 'Anime' : 'Manga'))}${item.startYear ? ` · ${item.startYear}` : ''} · BL tag rank ${item.boysLoveRank ?? '—'}${item.isAdult ? ' · Mature content' : ''}</span></li>`; }).join('')}</ul>`;
+  const pathPrefix = kind === 'anime' ? 'anime' : 'comic';
+  if (!page?.items.length) return `<p class="seo-empty">${kind === 'anime' ? 'BL anime' : 'BL comic'} titles will appear when AniList returns a matching page. Use the controls below to retry or browse another order.</p>`;
+  return `<ul class="seo-title-list">${page.items.slice(0, 12).map((item) => { const params = new URLSearchParams(); if (item.isAdult) params.set('mature', '1'); if ((item.boysLoveRank ?? 0) < DEFAULT_MINIMUM_BL_TAG_RANK) params.set('tagRank', 'all'); const query = params.toString(); return `<li><a href="/${pathPrefix}/${item.id}${query ? `?${query}` : ''}">${escapeHtml(item.displayTitle)}</a><span>${escapeHtml(item.format ?? (kind === 'anime' ? 'Anime' : 'Comic'))}${item.startYear ? ` · ${item.startYear}` : ''} · BL tag rank ${item.boysLoveRank ?? '—'}${item.isAdult ? ' · Mature content' : ''}</span></li>`; }).join('')}</ul>`;
 }
 
 function prerenderBody(
@@ -68,22 +69,22 @@ function prerenderBody(
   mediaSourceUnavailable = false,
 ): string {
   const path = pathname.length > 1 ? pathname.replace(/\/+$/, '') : '/';
-  if (mediaSourceUnavailable && /^\/(?:anime|manga)$/.test(path)) {
-    const kind = path.slice(1);
-    return `<div class="app-shell"><main class="detail-missing page-content"><a href="/${kind}">Retry ${kind} discovery</a><h1>${kind === 'anime' ? 'BL Anime' : 'BL Manga'} temporarily unavailable.</h1><p>AniList did not return this collection just now. Please retry shortly; the catalog is fetched live.</p></main></div>`;
+  if (mediaSourceUnavailable && /^\/(?:anime|manga|comic)$/.test(path)) {
+    const isAnime = path === '/anime';
+    return `<div class="app-shell"><main class="detail-missing page-content"><a href="${isAnime ? '/anime' : '/comic'}">Retry ${isAnime ? 'anime' : 'comic'} discovery</a><h1>${isAnime ? 'BL Anime' : 'BL Comic'} temporarily unavailable.</h1><p>AniList did not return this collection just now. Please retry shortly; the catalog is fetched live.</p></main></div>`;
   }
   if (path === '/') {
-    return `<div class="app-shell"><main><section class="hero"><div class="hero-glow"></div><div class="hero-content"><div class="hero-kicker">BL PULSE · STORIES WORTH STAYING UP FOR</div><h1>Your next story<br><span>starts here.</span></h1><p class="hero-copy">Explore BL series, anime and manga, then follow source-backed links to official viewing platforms.</p><div class="hero-actions"><a class="button button-primary" href="/discover">Explore live-action</a><a class="button button-secondary" href="/anime">Browse BL anime</a><a class="button button-secondary" href="/manga">Browse BL manga</a></div><div class="hero-footnote"><span class="pulse-mini"></span>Live-action, Anime and Manga browse live</div></div><div class="hero-side-note"><span>THE</span><span>BL</span><span>COLLECTION</span></div><div class="hero-bottom-fade"></div></section><div class="page-content"><section class="content-section"><div class="section-heading"><div><div class="eyebrow">LIVE-ACTION DISCOVERY</div><h2>Find the feeling. Follow the story.</h2></div></div>${seriesLinks(catalog.series)}</section><section class="content-section"><div class="section-heading"><div><div class="eyebrow">ANILIST · LIVE BROWSING</div><h2>BL Anime</h2></div></div>${mediaLinks(homeAnimePage ?? mediaPage, 'anime')}<a href="/anime">Explore the anime library</a></section><section class="content-section"><div class="section-heading"><div><div class="eyebrow">ANILIST · LIVE BROWSING</div><h2>BL Manga</h2></div></div>${mediaLinks(homeMangaPage, 'manga')}<a href="/manga">Explore the manga library</a></section></div></main></div>`;
+    return `<div class="app-shell"><main><section class="hero"><div class="hero-glow"></div><div class="hero-content"><div class="hero-kicker">BL PULSE · STORIES WORTH STAYING UP FOR</div><h1>Your next story<br><span>starts here.</span></h1><p class="hero-copy">Explore BL series, anime and comics, then follow source-backed links to official viewing platforms.</p><div class="hero-actions"><a class="button button-primary" href="/discover">Explore live-action</a><a class="button button-secondary" href="/anime">Browse BL anime</a><a class="button button-secondary" href="/comic">Browse BL comics</a></div><div class="hero-footnote"><span class="pulse-mini"></span>Live-action, Anime and Comic browse live</div></div><div class="hero-side-note"><span>THE</span><span>BL</span><span>COLLECTION</span></div><div class="hero-bottom-fade"></div></section><div class="page-content"><section class="content-section"><div class="section-heading"><div><div class="eyebrow">LIVE-ACTION DISCOVERY</div><h2>Find the feeling. Follow the story.</h2></div></div>${seriesLinks(catalog.series)}</section><section class="content-section"><div class="section-heading"><div><div class="eyebrow">ANILIST · LIVE BROWSING</div><h2>BL Anime</h2></div></div>${mediaLinks(homeAnimePage ?? mediaPage, 'anime')}<a href="/anime">Explore the anime library</a></section><section class="content-section"><div class="section-heading"><div><div class="eyebrow">ANILIST · LIVE BROWSING</div><h2>BL Comic</h2></div></div>${mediaLinks(homeMangaPage, 'manga')}<a href="/comic">Explore the comic library</a></section></div></main></div>`;
   }
 
   if (path === '/discover') {
     return `<div class="app-shell"><main class="discover-page page-content"><div class="discover-heading"><div class="eyebrow">BL PULSE · DISCOVERY</div><h1>Find your next story.</h1><p>Search strictly Boys’ Love live-action series, then review title details, episodes, and direct streaming destinations.</p>${seriesLinks(catalog.series)}</div></main></div>`;
   }
 
-  if (path === '/anime' || path === '/manga') {
-    const kind = path.slice(1) as 'anime' | 'manga';
-    const title = kind === 'anime' ? 'BL Anime discovery' : 'BL Manga discovery';
-    const category = kind === 'anime' ? 'anime' : 'manga';
+  if (path === '/anime' || path === '/manga' || path === '/comic') {
+    const isAnime = path === '/anime';
+    const title = isAnime ? 'BL Anime discovery' : 'BL Comic discovery';
+    const category = isAnime ? 'anime' : 'manga';
     return `<div class="app-shell"><main class="media-library page-content"><div class="eyebrow">ANILIST · BOYS’ LOVE TAG</div><h1>${title}</h1><p>Search the live AniList index, browse recent or older releases, and open each title for source tags and available episode or chapter destinations.</p><p class="media-attribution">Titles and cover art are supplied by AniList. Results are fetched as you browse; this site does not store the catalog.</p>${mediaLinks(mediaPage, category)}<p>Browse popular, newest and oldest matching titles. Use Load more to continue the source pagination.</p></main></div>`;
   }
 
@@ -99,16 +100,18 @@ function prerenderBody(
   }
 
   if (media) {
-    const kind = media.type === 'ANIME' ? 'anime' : 'manga';
+    const isAnime = media.type === 'ANIME';
+    const kindPath = isAnime ? 'anime' : 'comic';
+    const kindLabel = isAnime ? 'anime' : 'comic';
     const links = media.streamingEpisodes.map((episode) => `<li><a href="${escapeHtml(episode.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(episode.title)}${episode.site ? ` · ${escapeHtml(episode.site)}` : ''}</a></li>`).join('');
-    const platforms = media.streamingLinks.map((link) => `<li><a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.site)} ${kind === 'anime' ? 'title page' : 'reading page'}</a></li>`).join('');
+    const platforms = media.streamingLinks.map((link) => `<li><a href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(link.site)} ${isAnime ? 'title page' : 'reading page'}</a></li>`).join('');
     const image = safeHttpsUrl(media.coverImage);
-    return `<div class="app-shell"><main class="media-detail page-content"><a class="back-link" href="/${kind}">Back to BL ${kind}</a><section class="media-detail-hero">${image ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(media.displayTitle)} cover" width="300" height="440">` : ''}<div><div class="eyebrow">ANILIST · ${kind.toUpperCase()} · BL TAG RANK ${media.boysLoveRank ?? '—'}${media.isAdult ? ' · MATURE CONTENT' : ''}</div><h1>${escapeHtml(boundedHeading(media.displayTitle))}</h1><p>${escapeHtml(media.description ?? `Discover this AniList-tagged ${kind} title using its source details and available link destinations.`)}</p><a href="${escapeHtml(media.sourceUrl)}" target="_blank" rel="noopener noreferrer">View source details</a></div></section><section><h2>${kind === 'anime' ? 'Available episode links' : 'Chapter destinations'}</h2>${links ? `<ul>${links}</ul>` : `<p>Select an episode or chapter in the page controls and follow an official ${kind === 'anime' ? 'streaming' : 'reading'} destination.</p>`}${platforms ? `<h2>Source-listed ${kind === 'anime' ? 'streaming' : 'reading'} services</h2><ul>${platforms}</ul>` : ''}</section></main></div>`;
+    return `<div class="app-shell"><main class="media-detail page-content"><a class="back-link" href="/${kindPath}">Back to BL ${kindLabel}</a><section class="media-detail-hero">${image ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(media.displayTitle)} cover" width="300" height="440">` : ''}<div><div class="eyebrow">ANILIST · ${kindLabel.toUpperCase()} · BL TAG RANK ${media.boysLoveRank ?? '—'}${media.isAdult ? ' · MATURE CONTENT' : ''}</div><h1>${escapeHtml(boundedHeading(media.displayTitle))}</h1><p>${escapeHtml(media.description ?? `Discover this AniList-tagged ${kindLabel} title using its source details and available link destinations.`)}</p><a href="${escapeHtml(media.sourceUrl)}" target="_blank" rel="noopener noreferrer">View source details</a></div></section><section><h2>${isAnime ? 'Available episode links' : 'Chapter destinations'}</h2>${links ? `<ul>${links}</ul>` : `<p>Select an episode or chapter in the page controls and follow an official ${isAnime ? 'streaming' : 'reading'} destination.</p>`}${platforms ? `<h2>Source-listed ${isAnime ? 'streaming' : 'reading'} services</h2><ul>${platforms}</ul>` : ''}</section></main></div>`;
   }
 
-  if (mediaSourceUnavailable && /^\/(?:anime|manga)\/\d+\/?$/.test(path)) {
-    const kind = path.startsWith('/anime/') ? 'anime' : 'manga';
-    return `<div class="app-shell"><main class="detail-missing page-content"><a href="/${kind}">Back to BL ${kind}</a><h1>Title details temporarily unavailable.</h1><p>The live AniList lookup did not respond, so this title could not be verified. Please retry shortly.</p></main></div>`;
+  if (mediaSourceUnavailable && /^\/(?:anime|manga|comic)\/\d+\/?$/.test(path)) {
+    const isAnime = path.startsWith('/anime/');
+    return `<div class="app-shell"><main class="detail-missing page-content"><a href="${isAnime ? '/anime' : '/comic'}">Back to BL ${isAnime ? 'anime' : 'comic'}</a><h1>Title details temporarily unavailable.</h1><p>The live AniList lookup did not respond, so this title could not be verified. Please retry shortly.</p></main></div>`;
   }
 
   return '<div class="app-shell"><main class="detail-missing page-content"><h1>This page is not on the signal.</h1><p>The requested BL Pulse page could not be found.</p><a href="/">Return to BL Pulse</a></main></div>';
@@ -152,7 +155,7 @@ function buildJsonLd(metadata: SeoMetadata, origin: string | null, series?: Seri
     '@context': 'https://schema.org',
     '@type': 'WebApplication',
     name: 'BL Pulse',
-    alternateName: 'BL Pulse — Boys’ Love Series, Anime & Manga Guide',
+    alternateName: 'BL Pulse — Boys’ Love Series, Anime & Comic Guide',
     description: metadata.description,
     applicationCategory: 'EntertainmentApplication',
     operatingSystem: 'All',
@@ -200,24 +203,24 @@ export function renderSeoDocument(
   homeMangaPage?: MediaPageResponse,
   mediaSourceUnavailable = false,
 ): SeoDocument {
-  const unavailableDetail = mediaSourceUnavailable && /^\/(?:anime|manga)\/\d+\/?$/.test(pathname);
-  const unavailableListing = mediaSourceUnavailable && /^\/(?:anime|manga)\/?$/.test(pathname);
+  const unavailableDetail = mediaSourceUnavailable && /^\/(?:anime|manga|comic)\/\d+\/?$/.test(pathname);
+  const unavailableListing = mediaSourceUnavailable && /^\/(?:anime|manga|comic)\/?$/.test(pathname);
   const unavailableMediaPage = unavailableDetail || unavailableListing;
   const route = unavailableDetail ? {
     status: 503,
     metadata: {
       title: 'Title Details Temporarily Unavailable | BL Pulse',
-      description: 'The live AniList title lookup did not respond. Please retry shortly to view verified Boys’ Love anime or manga details.',
-      keywords: ['BL anime', 'BL manga', 'AniList', 'title details'],
+      description: 'The live AniList title lookup did not respond. Please retry shortly to view verified Boys’ Love anime or comic details.',
+      keywords: ['BL anime', 'BL comic', 'BL manga', 'AniList', 'title details'],
       canonicalPath: pathname,
       noindex: true,
     },
   } : unavailableListing ? {
     status: 503,
     metadata: {
-      title: pathname.startsWith('/anime') ? 'BL Anime Temporarily Unavailable | BL Pulse' : 'BL Manga Temporarily Unavailable | BL Pulse',
-      description: 'AniList did not return the live title collection. Please retry shortly to browse current Boys’ Love anime or manga.',
-      keywords: ['BL anime', 'BL manga', 'AniList', 'title collection'],
+      title: pathname.startsWith('/anime') ? 'BL Anime Temporarily Unavailable | BL Pulse' : 'BL Comic Temporarily Unavailable | BL Pulse',
+      description: 'AniList did not return the live title collection. Please retry shortly to browse current Boys’ Love anime or comics.',
+      keywords: ['BL anime', 'BL comic', 'BL manga', 'AniList', 'title collection'],
       canonicalPath: pathname,
       noindex: true,
     },
@@ -232,7 +235,7 @@ function xmlEscape(value: string): string {
 }
 
 export function renderSitemap(origin: string, catalog: CatalogResponse): string {
-  const paths = ['/', '/discover', '/anime', '/manga', ...catalog.series.map((series) => `/series/${encodeURIComponent(series.id)}`)];
+  const paths = ['/', '/discover', '/anime', '/comic', ...catalog.series.map((series) => `/series/${encodeURIComponent(series.id)}`)];
   const lastUpdate = catalog.lastRefreshed ? new Date(catalog.lastRefreshed) : null;
   const lastmod = lastUpdate && !Number.isNaN(lastUpdate.getTime()) ? lastUpdate.toISOString() : null;
   const unique = [...new Set(paths)];

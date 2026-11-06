@@ -112,9 +112,15 @@ export interface RedirectAnalyticsSummary {
   recentClicks: RedirectClickEvent[];
 }
 
+export interface MarketSyncUpdatedEntry {
+  series: Series;
+  changes: string[];
+}
+
 export interface MarketSyncResult {
   added: Series[];
   updated: Series[];
+  updatedDetails?: MarketSyncUpdatedEntry[];
   totalSeries: number;
   syncedAt: string;
   summary: string;

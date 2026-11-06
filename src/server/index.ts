@@ -51,7 +51,7 @@ function requireAdminAuth(req: Request, res: Response, next: NextFunction): void
     (req.headers['x-admin-password'] as string | undefined)?.trim() ||
     (typeof req.body?.password === 'string' ? req.body.password.trim() : '');
   if (!provided || provided !== getAdminPassword()) {
-    res.status(401).json({ message: 'Invalid admin password. Default password is blpulse2026 unless ADMIN_PASSWORD is set.' });
+    res.status(401).json({ message: 'Invalid admin password. Please enter your owner password.' });
     return;
   }
   next();
@@ -101,7 +101,7 @@ async function resolveSeoData(pathname: string): Promise<{
     return { series };
   }
 
-  if (pathClean === '/anime' || pathClean === '/manga') {
+  if (pathClean === '/anime' || pathClean === '/manga' || pathClean === '/comic') {
     const type: AniListMediaType = pathClean === '/anime' ? 'ANIME' : 'MANGA';
     try {
       const mediaPage = await browseAniList({ type, page: 1, sort: 'POPULARITY_DESC', minimumRank: DEFAULT_MINIMUM_BL_TAG_RANK });
@@ -111,7 +111,7 @@ async function resolveSeoData(pathname: string): Promise<{
     }
   }
 
-  const mediaMatch = pathClean.match(/^\/(anime|manga)\/(\d+)$/);
+  const mediaMatch = pathClean.match(/^\/(anime|manga|comic)\/(\d+)$/);
   if (mediaMatch) {
     const type: AniListMediaType = mediaMatch[1] === 'anime' ? 'ANIME' : 'MANGA';
     try {

@@ -16,7 +16,7 @@ export interface SeoRoute {
   metadata: SeoMetadata;
 }
 
-const homeKeywords = ['BL series', 'boys love', 'BL dramas', 'series discovery', 'where to watch'];
+const homeKeywords = ['BL series', 'boys love', 'BL dramas', 'BL comic', 'BL anime', 'where to watch'];
 const discoverKeywords = ['BL series', 'boys love series', 'BL drama discovery', 'streaming guide', 'series search'];
 const notFoundKeywords = ['BL Pulse', 'BL series', 'boys love'];
 
@@ -47,8 +47,8 @@ export function metadataForPath(pathname: string, series?: Series, media?: Media
     return {
       status: 200,
       metadata: {
-        title: 'BL Pulse — Discover BL Series, Anime & Manga',
-        description: 'Explore BL series, anime and manga, then follow source-backed links to official viewing platforms.',
+        title: 'BL Pulse — Discover BL Series, Anime & Comics',
+        description: 'Explore BL live-action series, anime, and comics (manga, manhwa & webtoons), then follow verified links to official platforms.',
         keywords: homeKeywords,
         canonicalPath,
       },
@@ -60,25 +60,25 @@ export function metadataForPath(pathname: string, series?: Series, media?: Media
       status: 200,
       metadata: {
         title: 'BL Series Discovery | BL Pulse',
-        description: 'Search and explore boys’ love series with current details, source notes and links to official viewing destinations.',
+        description: 'Search and explore boys’ love live-action series with current details, episodes, and links to official viewing destinations.',
         keywords: discoverKeywords,
         canonicalPath,
       },
     };
   }
 
-  if (canonicalPath === '/anime' || canonicalPath === '/manga') {
+  if (canonicalPath === '/anime' || canonicalPath === '/manga' || canonicalPath === '/comic') {
     const anime = canonicalPath === '/anime';
     return {
       status: 200,
       metadata: {
-        title: anime ? 'BL Anime Discovery Guide | BL Pulse' : 'BL Manga Discovery Guide | BL Pulse',
+        title: anime ? 'BL Anime Discovery Guide | BL Pulse' : 'BL Comic (Manga, Manhwa & Webtoon) Guide | BL Pulse',
         description: anime
-          ? 'Browse AniList’s community-tagged BL anime by title and release date. Rank 70+ is the default filter; all tagged titles remain available as an option.'
-          : 'Browse AniList’s community-tagged BL manga by title and release date. Rank 70+ is the default filter; all tagged titles remain available as an option.',
+          ? 'Browse strictly Boys’ Love anime by title, platform, and release date with verified episode redirects.'
+          : 'Browse strictly Boys’ Love comics—including Japanese manga, Korean manhwa, Chinese manhua, and webtoons—with chapter redirects.',
         keywords: anime
           ? ['BL anime', 'boys love anime', 'anime search', 'AniList', 'BL series']
-          : ['BL manga', 'boys love manga', 'manga search', 'AniList', 'BL stories'],
+          : ['BL comic', 'BL manga', 'BL manhwa', 'BL webtoon', 'boys love comics'],
         canonicalPath,
       },
     };
@@ -104,11 +104,11 @@ export function metadataForPath(pathname: string, series?: Series, media?: Media
   }
   if (seriesMatch) return missing(canonicalPath, 'BL Series Not Found | BL Pulse');
 
-  const mediaMatch = canonicalPath.match(/^\/(anime|manga)\/(\d+)$/);
+  const mediaMatch = canonicalPath.match(/^\/(anime|manga|comic)\/(\d+)$/);
   if (mediaMatch && media && media.type === (mediaMatch[1] === 'anime' ? 'ANIME' : 'MANGA')) {
     const anime = media.type === 'ANIME';
     const title = excerpt(media.displayTitle, 32);
-    const titleSuffix = ` | BL ${anime ? 'Anime' : 'Manga'} Guide | BL Pulse`;
+    const titleSuffix = ` | BL ${anime ? 'Anime' : 'Comic'} Guide | BL Pulse`;
     const description = media.description
       ? excerpt(`${media.displayTitle} — ${media.description}`, 155)
       : `Discover ${media.displayTitle}, tagged Boys’ Love by AniList. View the source tags and available ${anime ? 'episode' : 'chapter'} destinations.`;
@@ -117,14 +117,14 @@ export function metadataForPath(pathname: string, series?: Series, media?: Media
       metadata: {
         title: `${title}${titleSuffix}`,
         description,
-        keywords: [media.displayTitle, `BL ${anime ? 'anime' : 'manga'}`, 'boys love', 'AniList', 'streaming guide'],
+        keywords: [media.displayTitle, `BL ${anime ? 'anime' : 'comic'}`, 'boys love', 'AniList', 'streaming guide'],
         canonicalPath,
         image: media.coverImage ?? undefined,
         noindex: media.isAdult || (media.boysLoveRank !== null && media.boysLoveRank < DEFAULT_MINIMUM_BL_TAG_RANK) || undefined,
       },
     };
   }
-  if (mediaMatch) return missing(canonicalPath, `BL ${mediaMatch[1] === 'anime' ? 'Anime' : 'Manga'} Title Not Found | BL Pulse`);
+  if (mediaMatch) return missing(canonicalPath, `BL ${mediaMatch[1] === 'anime' ? 'Anime' : 'Comic'} Title Not Found | BL Pulse`);
 
   return missing(canonicalPath);
 }
