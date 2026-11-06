@@ -61,17 +61,16 @@ const DEFAULT_MONETIZATION: MonetizationConfig = {
     bookwalkerRef: 'blpulse',
   },
   sponsoredBanner: {
-    enabled: true,
-    badge: 'FEATURED PREMIERE SPOTLIGHT',
-    eyebrow: 'OFFICIAL STUDIO PARTNER SHOWCASE',
-    title: 'Revamp: The Undead Story',
-    synopsis:
-      'An antique shop owner with the rare gift to mend broken heirlooms accidentally awakens a centuries-old vampire heir—and must help him reclaim his lost powers.',
-    studio: 'GMMTV · Thailand',
-    country: 'Thailand',
-    ctaLabel: 'Explore Premiere & Platforms',
-    ctaUrl: '/series/tmdb-254102',
-    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/547/1369725.jpg',
+    enabled: false,
+    badge: '',
+    eyebrow: '',
+    title: '',
+    synopsis: '',
+    studio: '',
+    country: '',
+    ctaLabel: '',
+    ctaUrl: '',
+    coverUrl: '',
   },
 };
 
@@ -415,7 +414,7 @@ export function AdminPage({
             BLPulse Admin Studio
           </h1>
           <p style={{ margin: 0, color: 'rgba(226, 214, 248, 0.78)', fontSize: '0.92rem' }}>
-            <strong>BL Anime &amp; BL Comics</strong> refresh episodes &amp; chapters automatically live from AniList &amp; MangaDex · <strong>BL Live-Action ({catalog.series.length} series)</strong> is managed below.
+            <strong>BL Anime &amp; BL Manga</strong> refresh episodes &amp; chapters automatically live from AniList &amp; MangaDex · <strong>BL Live-Action ({catalog.series.length} series)</strong> is managed below.
           </p>
         </div>
 
@@ -489,7 +488,7 @@ export function AdminPage({
               Auto Sync Live-Action Series &amp; Episodes
             </h2>
             <p style={{ margin: 0, color: 'rgba(226, 214, 248, 0.8)', fontSize: '0.88rem', lineHeight: 1.55 }}>
-              Click <strong>Auto Sync</strong> to discover newly released BL live-action dramas, enrich posters &amp; synopses, and refresh verified episode redirect links across existing airing series. <em>(Note: Anime and Comics sync live automatically from AniList &amp; MangaDex—no manual sync needed.)</em>
+              Click <strong>Auto Sync</strong> to discover newly released BL live-action dramas, enrich posters &amp; synopses, and refresh verified episode redirect links across existing airing series. <em>(Note: Anime and Manga sync live automatically from AniList &amp; MangaDex—no manual sync needed.)</em>
             </p>
           </div>
 
@@ -1139,7 +1138,7 @@ export function AdminPage({
             }}
           >
             <div>
-              <div className="eyebrow">STREAMING &amp; COMIC AFFILIATE TAGS</div>
+              <div className="eyebrow">STREAMING &amp; MANGA AFFILIATE TAGS</div>
               <h3 style={{ margin: '4px 0 6px', fontSize: '1.2rem' }}>Official Partner Referral IDs</h3>
               <p style={{ margin: 0, fontSize: '0.82rem', color: 'rgba(226, 214, 248, 0.72)' }}>
                 Automatically appended to every 302 redirect when users click to watch or read on licensed platforms.
@@ -1153,10 +1152,10 @@ export function AdminPage({
                 ['iqiyiAffiliateId', 'iQIYI Partner ID (IQIYI_AFFILIATE_ID)'],
                 ['wetvAffiliateId', 'WeTV / Tencent Referral ID (WETV_AFFILIATE_ID)'],
                 ['crunchyrollAffiliateId', 'Crunchyroll Affiliate ID (CRUNCHYROLL_AFFILIATE_ID)'],
-                ['tapasRef', 'Tapas Comics Referral ID (TAPAS_REF)'],
-                ['lezhinRef', 'Lezhin Comics Referral ID (LEZHIN_REF)'],
+                ['tapasRef', 'Tapas Referral ID (TAPAS_REF)'],
+                ['lezhinRef', 'Lezhin Referral ID (LEZHIN_REF)'],
                 ['tappytoonRef', 'Tappytoon Partner ID (TAPPYTOON_REF)'],
-                ['mantaRef', 'Manta Comics Referral ID (MANTA_REF)'],
+                ['mantaRef', 'Manta Referral ID (MANTA_REF)'],
                 ['bookwalkerRef', 'BookWalker Affiliate Code (BOOKWALKER_REF)'],
               ] as const
             ).map(([fieldKey, label]) => (
@@ -1186,7 +1185,7 @@ export function AdminPage({
             ))}
           </div>
 
-          {/* Column 2: Display Ads & Sponsored Drama Spotlight */}
+          {/* Column 2: Display Ads */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
             <div
               style={{
@@ -1276,162 +1275,6 @@ export function AdminPage({
                   />
                 </label>
               </div>
-            </div>
-
-            {/* Sponsored Drama Spotlight Config */}
-            <div
-              style={{
-                padding: '24px',
-                borderRadius: '18px',
-                background: 'rgba(17, 13, 27, 0.94)',
-                border: '1px solid rgba(199, 146, 255, 0.24)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '12px',
-              }}
-            >
-              <div>
-                <div className="eyebrow">SPONSORED DRAMA SPOTLIGHT</div>
-                <h3 style={{ margin: '4px 0 6px', fontSize: '1.2rem' }}>Homepage Featured Premiere Banner</h3>
-              </div>
-
-              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontWeight: 600 }}>
-                <input
-                  type="checkbox"
-                  checked={monetization.sponsoredBanner.enabled}
-                  onChange={(e) =>
-                    setMonetization({
-                      ...monetization,
-                      sponsoredBanner: { ...monetization.sponsoredBanner, enabled: e.target.checked },
-                    })
-                  }
-                />
-                <span>Display Sponsored Premiere Banner on Homepage</span>
-              </label>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.8rem' }}>
-                  <span>Featured Title</span>
-                  <input
-                    value={monetization.sponsoredBanner.title}
-                    onChange={(e) =>
-                      setMonetization({
-                        ...monetization,
-                        sponsoredBanner: { ...monetization.sponsoredBanner, title: e.target.value },
-                      })
-                    }
-                    style={{
-                      padding: '9px 12px',
-                      borderRadius: '9px',
-                      border: '1px solid rgba(255,255,255,0.16)',
-                      background: 'rgba(9, 8, 13, 0.9)',
-                      color: '#fff',
-                    }}
-                  />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.8rem' }}>
-                  <span>Studio / Partner Label</span>
-                  <input
-                    value={monetization.sponsoredBanner.studio}
-                    onChange={(e) =>
-                      setMonetization({
-                        ...monetization,
-                        sponsoredBanner: { ...monetization.sponsoredBanner, studio: e.target.value },
-                      })
-                    }
-                    style={{
-                      padding: '9px 12px',
-                      borderRadius: '9px',
-                      border: '1px solid rgba(255,255,255,0.16)',
-                      background: 'rgba(9, 8, 13, 0.9)',
-                      color: '#fff',
-                    }}
-                  />
-                </label>
-              </div>
-
-              <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.8rem' }}>
-                <span>Spotlight Synopsis</span>
-                <textarea
-                  rows={2}
-                  value={monetization.sponsoredBanner.synopsis}
-                  onChange={(e) =>
-                    setMonetization({
-                      ...monetization,
-                      sponsoredBanner: { ...monetization.sponsoredBanner, synopsis: e.target.value },
-                    })
-                  }
-                  style={{
-                    padding: '9px 12px',
-                    borderRadius: '9px',
-                    border: '1px solid rgba(255,255,255,0.16)',
-                    background: 'rgba(9, 8, 13, 0.9)',
-                    color: '#fff',
-                    fontFamily: 'inherit',
-                  }}
-                />
-              </label>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.8rem' }}>
-                  <span>CTA Button Label</span>
-                  <input
-                    value={monetization.sponsoredBanner.ctaLabel}
-                    onChange={(e) =>
-                      setMonetization({
-                        ...monetization,
-                        sponsoredBanner: { ...monetization.sponsoredBanner, ctaLabel: e.target.value },
-                      })
-                    }
-                    style={{
-                      padding: '9px 12px',
-                      borderRadius: '9px',
-                      border: '1px solid rgba(255,255,255,0.16)',
-                      background: 'rgba(9, 8, 13, 0.9)',
-                      color: '#fff',
-                    }}
-                  />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.8rem' }}>
-                  <span>Target URL or /series/:id</span>
-                  <input
-                    value={monetization.sponsoredBanner.ctaUrl}
-                    onChange={(e) =>
-                      setMonetization({
-                        ...monetization,
-                        sponsoredBanner: { ...monetization.sponsoredBanner, ctaUrl: e.target.value },
-                      })
-                    }
-                    style={{
-                      padding: '9px 12px',
-                      borderRadius: '9px',
-                      border: '1px solid rgba(255,255,255,0.16)',
-                      background: 'rgba(9, 8, 13, 0.9)',
-                      color: '#fff',
-                    }}
-                  />
-                </label>
-              </div>
-
-              <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.8rem' }}>
-                <span>Poster Image URL</span>
-                <input
-                  value={monetization.sponsoredBanner.coverUrl}
-                  onChange={(e) =>
-                    setMonetization({
-                      ...monetization,
-                      sponsoredBanner: { ...monetization.sponsoredBanner, coverUrl: e.target.value },
-                    })
-                  }
-                  style={{
-                    padding: '9px 12px',
-                    borderRadius: '9px',
-                    border: '1px solid rgba(255,255,255,0.16)',
-                    background: 'rgba(9, 8, 13, 0.9)',
-                    color: '#fff',
-                  }}
-                />
-              </label>
 
               <button type="submit" className="button button-primary" disabled={saveMonetizationBusy} style={{ justifyContent: 'center', marginTop: '6px' }}>
                 {saveMonetizationBusy ? <LoaderCircle size={16} className="spin" /> : <CheckCircle2 size={16} />}
@@ -1470,7 +1313,7 @@ export function AdminPage({
             <div style={{ padding: '20px', borderRadius: '16px', background: 'rgba(17, 13, 27, 0.94)', border: '1px solid rgba(199, 146, 255, 0.24)' }}>
               <div className="eyebrow">BY MEDIA CATEGORY</div>
               <div style={{ fontSize: '0.92rem', fontWeight: 700, marginTop: '10px', lineHeight: 1.6 }}>
-                Live-Action: {analytics?.byCategory.series ?? 0} · Anime: {analytics?.byCategory.anime ?? 0} · Comic: {analytics?.byCategory.manga ?? 0}
+                Live-Action: {analytics?.byCategory.series ?? 0} · Anime: {analytics?.byCategory.anime ?? 0} · Manga: {analytics?.byCategory.manga ?? 0}
               </div>
             </div>
 
@@ -1503,7 +1346,7 @@ export function AdminPage({
                 </div>
               ) : (
                 <p style={{ color: 'rgba(226, 214, 248, 0.65)', fontSize: '0.86rem' }}>
-                  Click any Watch or Read button on a Series, Anime, or Comic detail page to see live platform telemetry here.
+                  Click any Watch or Read button on a Series, Anime, or Manga detail page to see live platform telemetry here.
                 </p>
               )}
             </div>
@@ -1519,7 +1362,7 @@ export function AdminPage({
                       <div>
                         <strong style={{ fontSize: '0.88rem' }}>{t.title}</strong>
                         <span style={{ marginLeft: '8px', fontSize: '0.7rem', textTransform: 'uppercase', color: '#a78bfa' }}>
-                          {t.kind === 'manga' ? 'comic' : t.kind}
+                          {t.kind}
                         </span>
                       </div>
                       <span style={{ fontWeight: 700 }}>{t.count} clicks</span>

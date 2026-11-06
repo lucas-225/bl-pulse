@@ -27,11 +27,11 @@ const COUNTRY_LABELS: Record<string, string> = {
 };
 
 function headingFor(type: AniListMediaType): string {
-  return type === 'ANIME' ? 'BL Anime' : 'BL Comic';
+  return type === 'ANIME' ? 'BL Anime' : 'BL Manga';
 }
 
 function browsePath(type: AniListMediaType): string {
-  return type === 'ANIME' ? '/anime' : '/comic';
+  return type === 'ANIME' ? '/anime' : '/manga';
 }
 
 function boundedHeading(value: string): string {
@@ -66,8 +66,8 @@ export function MediaCard({ item }: { item: MediaTitle }) {
 export function MediaSpotlightRail({ type, items }: { type: AniListMediaType; items: MediaTitle[] }) {
   if (items.length === 0) return null;
   return (
-    <section className="media-spotlight content-section" aria-label={`Popular BL ${type === 'ANIME' ? 'Anime' : 'Comic'} titles`}>
-      <div className="section-heading"><div><div className="eyebrow">ANILIST · STRICTLY BL</div><h2>{type === 'ANIME' ? 'BL Anime to explore' : 'BL Comics to explore'}</h2></div><Link className="text-link" to={browsePath(type)}>See all <ArrowUpRight size={13} /></Link></div>
+    <section className="media-spotlight content-section" aria-label={`Popular BL ${type === 'ANIME' ? 'Anime' : 'Manga'} titles`}>
+      <div className="section-heading"><div><div className="eyebrow">ANILIST · STRICTLY BL</div><h2>{headingFor(type)} to explore</h2></div><Link className="text-link" to={browsePath(type)}>See all <ArrowUpRight size={13} /></Link></div>
       <div className="media-spotlight-rail">{items.slice(0, 10).map((item) => <MediaCard item={item} key={item.id} />)}</div>
     </section>
   );
@@ -77,7 +77,7 @@ export function MediaCategoryCards({ liveActionCount }: { liveActionCount?: numb
   return (
     <section
       className="media-category-section"
-      aria-label="Browse Live-Action Series, Anime and Comics"
+      aria-label="Browse Live-Action Series, Anime and Manga"
       style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))' }}
     >
       <Link className="media-category-card" to="/discover">
@@ -96,12 +96,12 @@ export function MediaCategoryCards({ liveActionCount }: { liveActionCount?: numb
         <p>Browse strictly Boys’ Love anime with YouTube, Crunchyroll, Bilibili &amp; multi-platform episode redirects.</p>
         <span className="media-category-link">Explore anime <ArrowUpRight size={15} /></span>
       </Link>
-      <Link className="media-category-card media-category-manga" to="/comic">
+      <Link className="media-category-card media-category-manga" to="/manga">
         <span className="media-category-icon"><BookOpen size={21} /></span>
         <span className="eyebrow">ANILIST · LIVE BROWSING</span>
-        <h2>BL Comic</h2>
-        <p>Find strictly BL comics — Japanese manga, Korean manhwa, Chinese manhua &amp; webtoons — with platform and chapter selection.</p>
-        <span className="media-category-link">Explore comics <ArrowUpRight size={15} /></span>
+        <h2>BL Manga</h2>
+        <p>Find strictly BL manga, manhwa, manhua &amp; light novels with platform and chapter selection.</p>
+        <span className="media-category-link">Explore manga <ArrowUpRight size={15} /></span>
       </Link>
     </section>
   );
@@ -256,7 +256,7 @@ export function MediaLibraryPage({ type, monetization }: { type: AniListMediaTyp
       <header className="media-library-heading">
         <div className="eyebrow"><span className="live-indicator"><i /></span> ANILIST · STRICTLY BOYS’ LOVE</div>
         <h1>{headingFor(type)}<span> discovery.</span></h1>
-        <p>Browse strictly Boys’ Love {type === 'ANIME' ? 'anime' : 'comics (manga, manhwa, manhua & webtoons)'} with full filters and selectable streaming or reading platforms.</p>
+        <p>Browse strictly Boys’ Love {type === 'ANIME' ? 'anime' : 'manga, manhwa, manhua & novels'} with full filters and selectable streaming or reading platforms.</p>
         <div className="media-attribution">Titles and cover art are supplied live by AniList. Straight/heterosexual titles are automatically excluded.</div>
       </header>
 
@@ -266,8 +266,8 @@ export function MediaLibraryPage({ type, monetization }: { type: AniListMediaTyp
           <input
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            placeholder={`Search BL ${type === 'ANIME' ? 'anime' : 'comics, manga, manhwa & webtoons'}…`}
-            aria-label={`Search ${type === 'ANIME' ? 'anime' : 'comic'} titles`}
+            placeholder={`Search BL ${type === 'ANIME' ? 'anime' : 'manga & manhwa'}…`}
+            aria-label={`Search ${type === 'ANIME' ? 'anime' : 'manga'} titles`}
           />
         </div>
         <div className="filter-selects">
@@ -293,7 +293,7 @@ export function MediaLibraryPage({ type, monetization }: { type: AniListMediaTyp
                 </>
               ) : (
                 <>
-                  <option value="MANGA">Comic / Manga / Manhwa / Webtoon</option>
+                  <option value="MANGA">Manga / Manhwa / Manhua</option>
                   <option value="NOVEL">BL Light Novel</option>
                   <option value="ONE_SHOT">One-Shot</option>
                 </>
@@ -483,7 +483,7 @@ function EpisodeAndChapterPicker({ item }: { item: MediaTitle }) {
         {/* Step 1: Verified Available Platforms */}
         <div style={{ marginBottom: '18px' }}>
           <label className="episode-select-label" htmlFor="platform-select" style={{ display: 'block', marginBottom: '8px' }}>
-            1. Select Verified Platform ({uniquePlatforms.length} verified for this {isAnime ? 'anime' : 'comic'})
+            1. Select Verified Platform ({uniquePlatforms.length} verified for this {isAnime ? 'anime' : 'manga'})
           </label>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '6px' }}>
             {uniquePlatforms.map((pf) => {
@@ -675,7 +675,7 @@ export function MediaDetailPage({ type, monetization }: { type: AniListMediaType
         {item.bannerImage && <img className="media-detail-banner" src={item.bannerImage} alt="" />}
         <div className="media-detail-poster">{item.coverImage ? <img src={item.coverImage} alt={`${item.displayTitle} cover`} /> : <BookOpen size={34} />}</div>
         <div className="media-detail-copy">
-          <div className="eyebrow">ANILIST · {item.type === 'ANIME' ? 'BL ANIME' : 'BL COMIC'} · BL TAG RANK {item.boysLoveRank ?? '—'}</div>
+          <div className="eyebrow">ANILIST · {item.type} · BL TAG RANK {item.boysLoveRank ?? '—'}</div>
           <h1 title={item.displayTitle}>{boundedHeading(item.displayTitle)}</h1>
           <div className="media-detail-facts">
             {[

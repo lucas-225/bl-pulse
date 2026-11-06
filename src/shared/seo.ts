@@ -16,7 +16,7 @@ export interface SeoRoute {
   metadata: SeoMetadata;
 }
 
-const homeKeywords = ['BL series', 'boys love', 'BL dramas', 'BL comic', 'BL anime', 'where to watch'];
+const homeKeywords = ['BL series', 'boys love', 'BL dramas', 'BL manga', 'BL anime', 'where to watch'];
 const discoverKeywords = ['BL series', 'boys love series', 'BL drama discovery', 'streaming guide', 'series search'];
 const notFoundKeywords = ['BL Pulse', 'BL series', 'boys love'];
 
@@ -47,8 +47,8 @@ export function metadataForPath(pathname: string, series?: Series, media?: Media
     return {
       status: 200,
       metadata: {
-        title: 'BL Pulse — Discover BL Series, Anime & Comics',
-        description: 'Explore BL live-action series, anime, and comics (manga, manhwa & webtoons), then follow verified links to official platforms.',
+        title: 'BL Pulse — Discover BL Series, Anime & Manga',
+        description: 'Explore BL live-action series, anime, and manga, then follow verified links to official platforms.',
         keywords: homeKeywords,
         canonicalPath,
       },
@@ -72,13 +72,9 @@ export function metadataForPath(pathname: string, series?: Series, media?: Media
     return {
       status: 200,
       metadata: {
-        title: anime ? 'BL Anime Discovery Guide | BL Pulse' : 'BL Comic (Manga, Manhwa & Webtoon) Guide | BL Pulse',
-        description: anime
-          ? 'Browse strictly Boys’ Love anime by title, platform, and release date with verified episode redirects.'
-          : 'Browse strictly Boys’ Love comics—including Japanese manga, Korean manhwa, Chinese manhua, and webtoons—with chapter redirects.',
-        keywords: anime
-          ? ['BL anime', 'boys love anime', 'anime search', 'AniList', 'BL series']
-          : ['BL comic', 'BL manga', 'BL manhwa', 'BL webtoon', 'boys love comics'],
+        title: `BL ${anime ? 'Anime' : 'Manga'} Discovery Guide | BL Pulse`,
+        description: `Browse ${anime ? 'boys’ love anime' : 'boys’ love manga'} by title and release date, then open available ${anime ? 'episode' : 'chapter'} destinations from the source.`,
+        keywords: [`BL ${anime ? 'anime' : 'manga'}`, `boys love ${anime ? 'anime' : 'manga'}`, `${anime ? 'anime' : 'manga'} search`, 'AniList', 'BL series'],
         canonicalPath,
       },
     };
@@ -108,7 +104,7 @@ export function metadataForPath(pathname: string, series?: Series, media?: Media
   if (mediaMatch && media && media.type === (mediaMatch[1] === 'anime' ? 'ANIME' : 'MANGA')) {
     const anime = media.type === 'ANIME';
     const title = excerpt(media.displayTitle, 32);
-    const titleSuffix = ` | BL ${anime ? 'Anime' : 'Comic'} Guide | BL Pulse`;
+    const titleSuffix = ` | BL ${anime ? 'Anime' : 'Manga'} Guide | BL Pulse`;
     const description = media.description
       ? excerpt(`${media.displayTitle} — ${media.description}`, 155)
       : `Discover ${media.displayTitle}, tagged Boys’ Love by AniList. View the source tags and available ${anime ? 'episode' : 'chapter'} destinations.`;
@@ -117,14 +113,14 @@ export function metadataForPath(pathname: string, series?: Series, media?: Media
       metadata: {
         title: `${title}${titleSuffix}`,
         description,
-        keywords: [media.displayTitle, `BL ${anime ? 'anime' : 'comic'}`, 'boys love', 'AniList', 'streaming guide'],
+        keywords: [media.displayTitle, `BL ${anime ? 'anime' : 'manga'}`, 'boys love', 'AniList', 'streaming guide'],
         canonicalPath,
         image: media.coverImage ?? undefined,
         noindex: media.isAdult || (media.boysLoveRank !== null && media.boysLoveRank < DEFAULT_MINIMUM_BL_TAG_RANK) || undefined,
       },
     };
   }
-  if (mediaMatch) return missing(canonicalPath, `BL ${mediaMatch[1] === 'anime' ? 'Anime' : 'Comic'} Title Not Found | BL Pulse`);
+  if (mediaMatch) return missing(canonicalPath, `BL ${mediaMatch[1] === 'anime' ? 'Anime' : 'Manga'} Title Not Found | BL Pulse`);
 
   return missing(canonicalPath);
 }

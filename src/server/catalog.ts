@@ -3625,17 +3625,16 @@ let monetizationConfig: MonetizationConfig = {
     bookwalkerRef: process.env.BOOKWALKER_REF?.trim() || 'blpulse',
   },
   sponsoredBanner: {
-    enabled: true,
-    badge: 'FEATURED PREMIERE SPOTLIGHT',
-    eyebrow: 'OFFICIAL STUDIO PARTNER SHOWCASE',
-    title: 'Revamp: The Undead Story',
-    synopsis:
-      'An antique shop owner with the rare gift to mend broken heirlooms accidentally awakens a centuries-old vampire heir—and must help him reclaim his lost powers.',
-    studio: 'GMMTV · Thailand',
-    country: 'Thailand',
-    ctaLabel: 'Explore Premiere & Platforms',
-    ctaUrl: '/series/tmdb-254102',
-    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/547/1369725.jpg',
+    enabled: false,
+    badge: '',
+    eyebrow: '',
+    title: '',
+    synopsis: '',
+    studio: '',
+    country: '',
+    ctaLabel: '',
+    ctaUrl: '',
+    coverUrl: '',
   },
 };
 
@@ -3652,6 +3651,7 @@ export async function hydrateMonetizationConfig(): Promise<void> {
       sponsoredBanner: {
         ...monetizationConfig.sponsoredBanner,
         ...(saved.sponsoredBanner ?? {}),
+        enabled: false,
       },
     };
   }

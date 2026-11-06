@@ -14,29 +14,44 @@ import type {
   Series,
 } from '../shared/types';
 
-export async function fetchCatalog(): Promise<CatalogResponse> {
-  const response = await fetch('/api/catalog');
+async function parseJsonOrThrow<T>(response: Response, fallbackMessage: string): Promise<T> {
+  const text = await response.text();
   if (!response.ok) {
-    throw new Error('Unable to load the catalog right now.');
+    try {
+      const parsed = JSON.parse(text) as { message?: string };
+      throw new Error(parsed.message || fallbackMessage);
+    } catch (err) {
+      if (err instanceof Error && err.message !== fallbackMessage && !err.message.includes('Unexpected token')) {
+        throw err;
+      }
+      throw new Error(fallbackMessage);
+    }
   }
-  return response.json() as Promise<CatalogResponse>;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(fallbackMessage);
+  }
+}
+
+export async function fetchCatalog(): Promise<CatalogResponse> {
+  const response = await fetch('/api/catalog', { headers: { Accept: 'application/json' } });
+  return parseJsonOrThrow<CatalogResponse>(response, 'Unable to load the catalog right now.');
 }
 
 export async function refreshCatalog(): Promise<CatalogResponse> {
-  const response = await fetch('/api/refresh', { method: 'POST' });
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { message?: string } | null;
-    throw new Error(body?.message ?? 'Unable to refresh the catalog right now.');
-  }
-  return response.json() as Promise<CatalogResponse>;
+  const response = await fetch('/api/refresh', {
+    method: 'POST',
+    headers: { Accept: 'application/json' },
+  });
+  return parseJsonOrThrow<CatalogResponse>(response, 'Unable to refresh the catalog right now.');
 }
 
 export async function fetchSeries(id: string): Promise<Series> {
-  const response = await fetch(`/api/series/${encodeURIComponent(id)}`);
-  if (!response.ok) {
-    throw new Error('Unable to load this series.');
-  }
-  return response.json() as Promise<Series>;
+  const response = await fetch(`/api/series/${encodeURIComponent(id)}`, {
+    headers: { Accept: 'application/json' },
+  });
+  return parseJsonOrThrow<Series>(response, 'Unable to load this series.');
 }
 
 export interface MediaFilterOptions {
@@ -67,12 +82,16 @@ export async function fetchMediaPage(
   if (filters?.format && filters.format !== 'all') params.set('format', filters.format);
   if (filters?.countryOfOrigin && filters.countryOfOrigin !== 'all') params.set('country', filters.countryOfOrigin);
 
-  const response = await fetch(`/api/media?${params.toString()}`, { signal });
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { message?: string } | null;
-    throw new Error(body?.message ?? 'Unable to load titles from AniList.');
+  const url = `/api/media?${params.toString()}`;
+  const response = await fetch(url, { signal, headers: { Accept: 'application/json' } });
+  const contentType = response.headers.get('content-type') ?? '';
+  if (contentType.includes('text/html') && !signal?.aborted) {
+    // Dev server may be mid-restart; wait 600ms and retry once
+    await new Promise((resolve) => window.setTimeout(resolve, 600));
+    const retryRes = await fetch(url, { signal, headers: { Accept: 'application/json' } });
+    return parseJsonOrThrow<MediaPageResponse>(retryRes, 'Unable to load titles from AniList. Please click Retry.');
   }
-  return response.json() as Promise<MediaPageResponse>;
+  return parseJsonOrThrow<MediaPageResponse>(response, 'Unable to load titles from AniList.');
 }
 
 export async function fetchMediaTitle(
@@ -86,12 +105,9 @@ export async function fetchMediaTitle(
   if (includeAdult) params.set('includeAdult', '1');
   if (minimumRank !== DEFAULT_MINIMUM_BL_TAG_RANK) params.set('minRank', String(minimumRank));
   const query = params.toString();
-  const response = await fetch(`/api/media/${type.toLowerCase()}/${id}${query ? `?${query}` : ''}`, { signal });
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { message?: string } | null;
-    throw new Error(body?.message ?? 'Unable to load title details from AniList.');
-  }
-  return response.json() as Promise<MediaTitle>;
+  const url = `/api/media/${type.toLowerCase()}/${id}${query ? `?${query}` : ''}`;
+  const response = await fetch(url, { signal, headers: { Accept: 'application/json' } });
+  return parseJsonOrThrow<MediaTitle>(response, 'Unable to load title details from AniList.');
 }
 
 // ============================================================================

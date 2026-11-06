@@ -16,7 +16,6 @@ import {
   SectionLink,
   SeriesCard,
   SeriesRail,
-  SponsoredSpotlightBanner,
   StatusPill,
   type MixedItem,
 } from './components';
@@ -36,7 +35,7 @@ function timeLabel(value: string | null): string {
 interface HeroArtwork {
   url: string;
   title: string;
-  label: 'Live action' | 'Anime' | 'Comic';
+  label: 'Live action' | 'Anime' | 'Manga';
   path: string;
 }
 
@@ -151,10 +150,10 @@ function App() {
           <Route path="/series/:id" element={<SeriesPage catalog={status} updateOne={updateOne} />} />
           <Route path="/anime" element={<MediaLibraryPage type="ANIME" monetization={catalog.monetization} />} />
           <Route path="/anime/:id" element={<MediaDetailPage type="ANIME" monetization={catalog.monetization} />} />
-          <Route path="/comic" element={<MediaLibraryPage type="MANGA" monetization={catalog.monetization} />} />
-          <Route path="/comic/:id" element={<MediaDetailPage type="MANGA" monetization={catalog.monetization} />} />
           <Route path="/manga" element={<MediaLibraryPage type="MANGA" monetization={catalog.monetization} />} />
           <Route path="/manga/:id" element={<MediaDetailPage type="MANGA" monetization={catalog.monetization} />} />
+          <Route path="/comic" element={<MediaLibraryPage type="MANGA" monetization={catalog.monetization} />} />
+          <Route path="/comic/:id" element={<MediaDetailPage type="MANGA" monetization={catalog.monetization} />} />
           <Route path="/admin" element={<AdminPage catalog={status} onCatalogUpdated={setCatalog} />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
@@ -292,7 +291,7 @@ function HomePage({ catalog, loading }: { catalog: CatalogResponse; loading: boo
     const candidates: HeroArtwork[] = [
       ...catalog.series.flatMap((item) => item.coverUrl ? [{ url: item.coverUrl, title: item.title, label: 'Live action' as const, path: `/series/${item.id}` }] : []),
       ...animePicks.flatMap((item) => item.bannerImage || item.coverImage ? [{ url: item.bannerImage || item.coverImage!, title: item.displayTitle, label: 'Anime' as const, path: `/anime/${item.id}` }] : []),
-      ...mangaPicks.flatMap((item) => item.bannerImage || item.coverImage ? [{ url: item.bannerImage || item.coverImage!, title: item.displayTitle, label: 'Comic' as const, path: `/comic/${item.id}` }] : []),
+      ...mangaPicks.flatMap((item) => item.bannerImage || item.coverImage ? [{ url: item.bannerImage || item.coverImage!, title: item.displayTitle, label: 'Manga' as const, path: `/manga/${item.id}` }] : []),
     ].filter((item, index, all) => !failedArt.includes(item.url) && all.findIndex((candidate) => candidate.url === item.url) === index);
     return candidates.length ? candidates[rotationIndex % candidates.length] : null;
   }, [animePicks, catalog.series, failedArt, mangaPicks, rotationIndex, rotationStarted]);
@@ -306,13 +305,13 @@ function HomePage({ catalog, loading }: { catalog: CatalogResponse; loading: boo
           <Freshness lastRefreshed={catalog.lastRefreshed} sourceOnline={catalog.sourceOnline} />
           <div className="hero-kicker"><span className="kicker-icon"><Radio size={14} /></span> STORIES WORTH STAYING UP FOR</div>
           <h1>Your next story<br /><span>starts here.</span></h1>
-          <p className="hero-copy">Explore BL live-action series, anime and comics (manga, manhwa &amp; webtoons) — select your platform and episode or chapter, then jump directly to your story.</p>
+          <p className="hero-copy">Explore BL live-action series, anime and manga — select your platform and episode or chapter, then jump directly to your story.</p>
           {featured && <div className="hero-feature"><span className="hero-feature-line" /><div><span className="hero-feature-label">ON THE SIGNAL</span><strong>{featured.title}</strong><span className="hero-feature-meta">{featured.country} <span>·</span> {featured.status === 'airing' ? 'Airing now' : featured.status === 'upcoming' ? 'Coming soon' : 'Completed'}</span></div></div>}
           <div className="hero-actions">
             <Link className="button button-primary" to={featured ? `/series/${featured.id}` : '/discover'}><Sparkles size={17} /> Explore the story</Link>
             <Link className="button button-secondary" to="/discover"><BookOpen size={17} /> Browse Live-Action ({catalog.series.length})</Link>
           </div>
-          <div className="hero-footnote"><span className="pulse-mini" /> {catalog.series.length ? `${catalog.series.length.toLocaleString()} live-action series · BL Anime · BL Comic` : 'BL Live-Action · Anime · Comic'} <span className="footnote-divider">/</span> {catalog.lastRefreshed ? timeLabel(catalog.lastRefreshed) : 'Multi-platform episode & chapter redirects active'}</div>
+          <div className="hero-footnote"><span className="pulse-mini" /> {catalog.series.length ? `${catalog.series.length.toLocaleString()} live-action series · BL Anime · BL Manga` : 'BL Live-Action · Anime · Manga'} <span className="footnote-divider">/</span> {catalog.lastRefreshed ? timeLabel(catalog.lastRefreshed) : 'Multi-platform episode & chapter redirects active'}</div>
         </div>
         <div className="hero-side-note"><span>THE</span><span>BL</span><span>COLLECTION</span></div>
         {heroArt && <div className="hero-art-credit"><span>IN THE ROTATION · {heroArt.label.toUpperCase()}</span><Link to={heroArt.path}>{heroArt.title} <ArrowUpRight size={12} /></Link></div>}
@@ -339,12 +338,12 @@ function HomePage({ catalog, loading }: { catalog: CatalogResponse; loading: boo
                 Clear search
               </button>
             </div>
-            {searchBusy && <LoadingState label={`Searching Live-Action, Anime, and Comic for "${globalSearchQuery}"`} />}
+            {searchBusy && <LoadingState label={`Searching Live-Action, Anime, and Manga for "${globalSearchQuery}"`} />}
             {!searchBusy && searchedLiveAction.length === 0 && searchedAnime.length === 0 && searchedManga.length === 0 && (
               <div className="empty-results" style={{ marginTop: '16px' }}>
                 <div className="empty-mark"><Search size={21} /></div>
-                <h2>No matching BL series, anime, or comic found.</h2>
-                <p>Try searching by another title keyword across Live-Action, Anime, or Comic.</p>
+                <h2>No matching BL series, anime, or manga found.</h2>
+                <p>Try searching by another title keyword across Live-Action, Anime, or Manga.</p>
               </div>
             )}
             {searchedLiveAction.length > 0 && (
@@ -365,7 +364,7 @@ function HomePage({ catalog, loading }: { catalog: CatalogResponse; loading: boo
             )}
             {searchedManga.length > 0 && (
               <div style={{ marginTop: '24px' }}>
-                <div className="eyebrow" style={{ marginBottom: '12px' }}>BL COMIC — MANGA, MANHWA &amp; WEBTOON ({searchedManga.length})</div>
+                <div className="eyebrow" style={{ marginBottom: '12px' }}>BL MANGA, MANHWA &amp; WEBTOON ({searchedManga.length})</div>
                 <div className="media-grid">
                   {searchedManga.slice(0, 12).map((item) => <MediaCard key={item.id} item={item} />)}
                 </div>
@@ -376,12 +375,10 @@ function HomePage({ catalog, loading }: { catalog: CatalogResponse; loading: boo
 
         <div className="catalog-intro">
           <div className="intro-copy"><div className="eyebrow">THE UNIFIED BL CATALOG</div><h2>Find the feeling.<br /><em>Follow the story.</em></h2></div>
-          <p>Strictly Boys’ Love live-action series, BL anime, and BL comics (manga, manhwa, manhua &amp; webtoons) — choose your preferred platform (YouTube, Crunchyroll, GagaOOLala, iQIYI, Viki, MangaDex &amp; more) and jump straight to any episode or chapter.</p>
+          <p>Strictly Boys’ Love live-action series, BL anime, and BL manga/manhwa — choose your preferred platform (YouTube, Crunchyroll, GagaOOLala, iQIYI, Viki, MangaDex &amp; more) and jump straight to any episode or chapter.</p>
         </div>
 
         <MediaCategoryCards liveActionCount={catalog.series.length} />
-
-        <SponsoredSpotlightBanner banner={catalog.monetization?.sponsoredBanner} />
 
         {/* Explore Rails for all 3 categories on the Home Page */}
         <SeriesRail
@@ -397,28 +394,28 @@ function HomePage({ catalog, loading }: { catalog: CatalogResponse; loading: boo
         {loading && catalog.sourceOnline && catalog.series.length === 0 && <LoadingState label="Finding the latest stories" />}
         {!loading && catalog.series.length === 0 && <EmptyState />}
 
-        {/* Unified Mixed Status Rails on the Home Page (Live-Action + Anime + Comic) */}
+        {/* Unified Mixed Status Rails on the Home Page (Live-Action + Anime + Manga) */}
         <MixedCatalogRail
           title="Happening now"
-          eyebrow="CURRENTLY AIRING & RELEASING · LIVE-ACTION · ANIME · COMIC"
+          eyebrow="CURRENTLY AIRING & RELEASING · LIVE-ACTION · ANIME · MANGA"
           items={mixedCurrent}
           action={<SectionLink to="/discover?status=airing">Live-Action Airing</SectionLink>}
         />
         <MixedCatalogRail
           title="On the horizon"
-          eyebrow="UPCOMING · LIVE-ACTION · ANIME · COMIC"
+          eyebrow="UPCOMING · LIVE-ACTION · ANIME · MANGA"
           items={mixedUpcoming}
           action={<SectionLink to="/discover?status=upcoming">Upcoming Releases</SectionLink>}
         />
         {catalog.editorial && <EditorialCard post={catalog.editorial} />}
         <MixedCatalogRail
           title="A story for every mood"
-          eyebrow="COMPLETED ARCHIVE · LIVE-ACTION · ANIME · COMIC"
+          eyebrow="COMPLETED ARCHIVE · LIVE-ACTION · ANIME · MANGA"
           items={mixedCompleted}
           action={<SectionLink to="/discover?status=completed">Explore Archive</SectionLink>}
         />
 
-        <div className="source-note"><span className="source-note-icon"><Radio size={16} /></span><p><strong>Strictly verified platforms &amp; direct links.</strong> Every Live-Action series, Anime, and Comic lists only verified streaming or reading platforms with direct URLs and episode or chapter selection.</p><Link className="text-link" to="/discover">Explore All {catalog.series.length} Live-Action Series <ArrowUpRight size={15} /></Link></div>
+        <div className="source-note"><span className="source-note-icon"><Radio size={16} /></span><p><strong>Strictly verified platforms &amp; direct links.</strong> Every Live-Action series, Anime, and Manga lists only verified streaming or reading platforms with direct URLs and episode or chapter selection.</p><Link className="text-link" to="/discover">Explore All {catalog.series.length} Live-Action Series <ArrowUpRight size={15} /></Link></div>
       </div>
     </>
   );

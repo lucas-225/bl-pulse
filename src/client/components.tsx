@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
-import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { Link, NavLink, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
   ArrowRight,
   ArrowUpRight,
   ChevronRight,
-  Megaphone,
   Radio,
   RefreshCw,
   Search,
@@ -13,7 +12,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { DEFAULT_MINIMUM_BL_TAG_RANK, type MediaTitle } from '../shared/media';
-import type { MonetizationConfig, Series, SeriesStatus, SponsoredBannerConfig } from '../shared/types';
+import type { MonetizationConfig, Series, SeriesStatus } from '../shared/types';
 import { fetchMediaPage } from './api';
 
 const MARK_URL = '/assets/aistudio/blpulse-mark_2739ad76.png';
@@ -21,7 +20,7 @@ const MARK_URL = '/assets/aistudio/blpulse-mark_2739ad76.png';
 export interface UnifiedRecommendation {
   key: string;
   title: string;
-  category: 'Live Action' | 'Anime' | 'Comic';
+  category: 'Live Action' | 'Anime' | 'Manga';
   subtitle: string;
   coverUrl?: string | null;
   path: string;
@@ -158,99 +157,6 @@ export function AdBanner({
   );
 }
 
-export function SponsoredSpotlightBanner({ banner }: { banner?: SponsoredBannerConfig }) {
-  if (!banner || !banner.enabled || !banner.title.trim()) return null;
-
-  const isExternal = /^https?:\/\//i.test(banner.ctaUrl);
-
-  return (
-    <section
-      aria-label="Sponsored premiere spotlight"
-      style={{
-        margin: '28px 0 36px',
-        padding: '26px 28px',
-        borderRadius: '20px',
-        background:
-          'linear-gradient(125deg, rgba(34, 21, 56, 0.94) 0%, rgba(19, 14, 32, 0.96) 65%, rgba(48, 24, 72, 0.9) 100%)',
-        border: '1px solid rgba(199, 146, 255, 0.36)',
-        boxShadow: '0 22px 50px rgba(0, 0, 0, 0.45)',
-        display: 'grid',
-        gridTemplateColumns: banner.coverUrl ? 'minmax(0, 1fr) 150px' : '1fr',
-        gap: '24px',
-        alignItems: 'center',
-      }}
-    >
-      <div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '5px',
-              padding: '4px 10px',
-              borderRadius: '6px',
-              background: 'rgba(244, 114, 182, 0.2)',
-              border: '1px solid rgba(244, 114, 182, 0.45)',
-              color: '#fbcfe8',
-              fontSize: '0.7rem',
-              fontWeight: 700,
-              letterSpacing: '0.07em',
-            }}
-          >
-            <Megaphone size={12} />
-            {banner.badge || 'FEATURED PREMIERE SPOTLIGHT'}
-          </span>
-          <span style={{ fontSize: '0.75rem', color: 'rgba(226, 214, 248, 0.78)', fontWeight: 600, letterSpacing: '0.06em' }}>
-            {banner.eyebrow} · {banner.studio}
-          </span>
-        </div>
-
-        <h2 style={{ fontSize: 'clamp(1.35rem, 2.2vw, 1.85rem)', margin: '0 0 10px', color: '#fff' }}>
-          {banner.title}
-        </h2>
-        <p style={{ margin: '0 0 18px', color: 'rgba(235, 225, 255, 0.84)', lineHeight: 1.6, maxWidth: '760px' }}>
-          {banner.synopsis}
-        </p>
-
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
-          {isExternal ? (
-            <a className="button button-primary" href={banner.ctaUrl} target="_blank" rel="noopener noreferrer">
-              <Sparkles size={16} /> {banner.ctaLabel || 'Watch Official Premiere'} <ArrowUpRight size={15} />
-            </a>
-          ) : (
-            <Link className="button button-primary" to={banner.ctaUrl || '/discover'}>
-              <Sparkles size={16} /> {banner.ctaLabel || 'Explore Premiere'} <ArrowUpRight size={15} />
-            </Link>
-          )}
-          <span style={{ fontSize: '0.76rem', color: 'rgba(226, 214, 248, 0.65)' }}>
-            Origin: {banner.country || 'Thailand'} · Verified Official Redirect
-          </span>
-        </div>
-      </div>
-
-      {banner.coverUrl && (
-        <div
-          style={{
-            width: '140px',
-            height: '196px',
-            borderRadius: '12px',
-            overflow: 'hidden',
-            border: '1px solid rgba(199, 146, 255, 0.35)',
-            boxShadow: '0 14px 30px rgba(0,0,0,0.55)',
-            justifySelf: 'end',
-          }}
-        >
-          <img
-            src={banner.coverUrl}
-            alt={banner.title}
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-          />
-        </div>
-      )}
-    </section>
-  );
-}
-
 export function Header({
   refreshing,
   onRefresh,
@@ -270,8 +176,6 @@ export function Header({
   const [searchingMedia, setSearchingMedia] = useState(false);
   const containerRef = useRef<HTMLFormElement>(null);
   const navigate = useNavigate();
-  const location = useLocation();
-  const isComicActive = location.pathname.startsWith('/comic') || location.pathname.startsWith('/manga');
 
   useEffect(() => {
     function handleOutsideClick(event: MouseEvent) {
@@ -335,10 +239,10 @@ export function Header({
       return {
         key: `${item.type}-${item.id}`,
         title: item.displayTitle,
-        category: item.type === 'ANIME' ? ('Anime' as const) : ('Comic' as const),
+        category: item.type === 'ANIME' ? ('Anime' as const) : ('Manga' as const),
         subtitle: [item.format, item.startYear, item.status?.replaceAll('_', ' ')].filter(Boolean).join(' · '),
         coverUrl: item.coverImage,
-        path: `/${item.type === 'ANIME' ? 'anime' : 'comic'}/${item.id}${qs ? `?${qs}` : ''}`,
+        path: `/${item.type === 'ANIME' ? 'anime' : 'manga'}/${item.id}${qs ? `?${qs}` : ''}`,
       };
     });
 
@@ -378,7 +282,7 @@ export function Header({
         <nav className="primary-nav" aria-label="Main navigation">
           <NavLink to="/discover" end className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Live action</NavLink>
           <NavLink to="/anime" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Anime</NavLink>
-          <NavLink to="/comic" className={() => isComicActive ? 'nav-link active' : 'nav-link'}>Comic</NavLink>
+          <NavLink to="/manga" className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}>Manga</NavLink>
         </nav>
         <div className="topbar-actions">
           <form
@@ -390,14 +294,14 @@ export function Header({
           >
             <Search size={16} aria-hidden="true" />
             <input
-              aria-label="Search all BL series, anime, and comics"
+              aria-label="Search all BL series, anime, and manga"
               value={query}
               onFocus={() => setOpenDropdown(true)}
               onChange={(event) => {
                 setQuery(event.target.value);
                 setOpenDropdown(true);
               }}
-              placeholder="Search BL series, anime & comics…"
+              placeholder="Search BL series, anime & manga…"
             />
             {query && (
               <button
@@ -415,7 +319,7 @@ export function Header({
             {openDropdown && query.trim().length > 0 && (
               <div
                 role="listbox"
-                aria-label="Search recommendations across Live Action, Anime, and Comic"
+                aria-label="Search recommendations across Live Action, Anime, and Manga"
                 style={{
                   position: 'absolute',
                   top: 'calc(100% + 8px)',

@@ -749,7 +749,13 @@ async function queryAniList<T>(key: string, query: string, variables: Record<str
     }
 
     if (!response.ok) throw new Error(`AniList returned HTTP ${response.status}.`);
-    const payload = (await response.json()) as { data?: Record<string, unknown>; errors?: Array<{ message?: string }> };
+    const rawText = await response.text();
+    let payload: { data?: Record<string, unknown>; errors?: Array<{ message?: string }> };
+    try {
+      payload = JSON.parse(rawText) as { data?: Record<string, unknown>; errors?: Array<{ message?: string }> };
+    } catch {
+      throw new Error('AniList is momentarily busy. Please click Retry.');
+    }
     if (payload.errors?.length) throw new Error(payload.errors[0]?.message || 'AniList query failed.');
     const result = (payload.data ?? {}) as T;
     responseCache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, value: result as MediaPageResponse | MediaTitle | null });
