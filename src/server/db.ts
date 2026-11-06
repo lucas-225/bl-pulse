@@ -62,8 +62,6 @@ export async function initDatabase(): Promise<boolean> {
   if (dbInitialized) return true;
 
   try {
-    await db.execute(`CREATE DATABASE IF NOT EXISTS test`);
-    await db.query(`USE test`);
     await db.execute(`
       CREATE TABLE IF NOT EXISTS bl_series (
         id VARCHAR(191) PRIMARY KEY,
