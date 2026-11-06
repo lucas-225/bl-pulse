@@ -19,8 +19,7 @@ export function getDbPool(): mysql.Pool | null {
       enableKeepAlive: true,
     });
     return pool;
-  } catch (err) {
-    console.warn('[db] Could not create MySQL pool, falling back to in-memory catalog:', err);
+  } catch {
     return null;
   }
 }
@@ -88,8 +87,7 @@ export async function initDatabase(): Promise<boolean> {
 
     dbInitialized = true;
     return true;
-  } catch (err) {
-    console.warn('[db] Database table initialization skipped (using in-memory cache):', err);
+  } catch {
     return false;
   }
 }
@@ -152,8 +150,7 @@ export async function loadSeriesFromDb(): Promise<Series[] | null> {
       sourceUrl: String(row.source_url),
       updatedAt: String(row.updated_at),
     }));
-  } catch (err) {
-    console.warn('[db] Failed to load series from DB:', err);
+  } catch {
     return null;
   }
 }
@@ -257,8 +254,8 @@ export async function saveSeriesToDb(seriesList: Series[]): Promise<void> {
         await db.query(epSql, [episodeRows.slice(i, i + 200)]);
       }
     }
-  } catch (err) {
-    console.warn('[db] Failed to save series to DB:', err);
+  } catch {
+    // Fallback to in-memory cache when DB is not reachable
   }
 }
 
@@ -271,8 +268,8 @@ export async function deleteSeriesFromDb(seriesId: string): Promise<void> {
     await db.execute('DELETE FROM bl_episodes WHERE series_id = ?', [seriesId]);
     await db.execute('DELETE FROM bl_platforms WHERE series_id = ?', [seriesId]);
     await db.execute('DELETE FROM bl_series WHERE id = ?', [seriesId]);
-  } catch (err) {
-    console.warn('[db] Failed to delete series from DB:', err);
+  } catch {
+    // Ignore DB delete error when using in-memory cache
   }
 }
 

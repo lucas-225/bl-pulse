@@ -1,4 +1,3 @@
-import { GoogleGenAI } from '@google/genai';
 import type {
   CatalogResponse,
   EditorialPost,
@@ -3694,42 +3693,121 @@ function slugifyId(title: string): string {
 }
 
 async function fetchTvMazeMetadata(title: string): Promise<{
+  officialTitle?: string;
   coverUrl?: string;
   synopsis?: string;
   year?: number;
   releaseDate?: string;
   country?: string;
+  status?: SeriesStatus;
+  episodes?: number;
+  genres?: string[];
 }> {
   try {
     const cleanName = title.replace(/\s*\(.*?\)\s*/g, '').trim();
     const res = await fetch(
-      `https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(cleanName)}`,
-      { signal: AbortSignal.timeout(4000) },
+      `https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(cleanName)}&embed=episodes`,
+      { signal: AbortSignal.timeout(4500) },
     );
     if (!res.ok) return {};
     const data = (await res.json()) as {
+      name?: string;
+      status?: string;
       premiered?: string;
       summary?: string;
+      genres?: string[];
       image?: { original?: string; medium?: string };
       network?: { country?: { name?: string } };
       webChannel?: { country?: { name?: string } };
+      _embedded?: { episodes?: unknown[] };
     };
     const img = data.image?.original || data.image?.medium;
     const rawSummary = data.summary ? data.summary.replace(/<[^>]+>/g, '').trim() : undefined;
     const premiered = data.premiered || undefined;
     const year = premiered ? Number(premiered.slice(0, 4)) : undefined;
-    const country = data.network?.country?.name || data.webChannel?.country?.name || undefined;
+    const rawCountry = data.network?.country?.name || data.webChannel?.country?.name || undefined;
+    const country =
+      rawCountry === 'Korea, Republic of'
+        ? 'South Korea'
+        : rawCountry === 'Taiwan, Province of China'
+          ? 'Taiwan'
+          : rawCountry;
+    const epCount = Array.isArray(data._embedded?.episodes) ? data._embedded.episodes.length : undefined;
+    const mappedStatus: SeriesStatus | undefined =
+      data.status === 'Running'
+        ? 'airing'
+        : data.status === 'In Development' || data.status === 'To Be Determined'
+          ? 'upcoming'
+          : data.status === 'Ended'
+            ? 'completed'
+            : undefined;
 
     return {
+      officialTitle: data.name || undefined,
       coverUrl: img ? img.replace(/^http:/i, 'https:') : undefined,
       synopsis: rawSummary,
       year: Number.isFinite(year) ? year : undefined,
       releaseDate: premiered,
       country,
+      status: mappedStatus,
+      episodes: epCount && epCount > 0 ? epCount : undefined,
+      genres: Array.isArray(data.genres) && data.genres.length > 0 ? ['BL', ...data.genres] : undefined,
     };
   } catch {
     return {};
   }
+}
+
+async function discoverOfficialPlatformsFromWeb(title: string): Promise<PlatformLink[]> {
+  const BROWSER_UA =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+  const found: PlatformLink[] = [];
+  const seen = new Set<string>();
+
+  try {
+    const query = `"${title}" (site:viki.com/tv OR site:iq.com/album OR site:gagaoolala.com/en/videos OR site:wetv.vip/en/play)`;
+    const searchUrl = `https://search.yahoo.com/search?p=${encodeURIComponent(query)}`;
+    const res = await fetch(searchUrl, {
+      headers: { 'User-Agent': BROWSER_UA, Accept: 'text/html' },
+      signal: AbortSignal.timeout(4000),
+    });
+    if (res.ok) {
+      const html = await res.text();
+      for (const m of html.matchAll(/RU=([^/&"]+)/g)) {
+        try {
+          const decoded = decodeURIComponent(m[1]);
+          if (!decoded.startsWith('https://')) continue;
+          if (/viki\.com\/tv\/\d+c/i.test(decoded) && !seen.has('viki')) {
+            seen.add('viki');
+            found.push({ name: 'Viki', url: decoded.split('?')[0], source: 'official' });
+          } else if (/iq\.com\/album\//i.test(decoded) && !seen.has('iqiyi')) {
+            seen.add('iqiyi');
+            found.push({ name: 'iQIYI', url: decoded.split('?')[0] + '?lang=en_us', source: 'official' });
+          } else if (/gagaoolala\.com\/en\/videos\/\d+\//i.test(decoded) && !seen.has('gagaoolala')) {
+            seen.add('gagaoolala');
+            found.push({ name: 'GagaOOLala', url: decoded.split('?')[0], source: 'official' });
+          } else if (/wetv\.vip\/en\/play\//i.test(decoded) && !seen.has('wetv')) {
+            seen.add('wetv');
+            found.push({ name: 'WeTV', url: decoded.split('?')[0], source: 'official' });
+          }
+        } catch {
+          // Ignore malformed URI
+        }
+      }
+    }
+  } catch {
+    // Ignore web discovery timeout
+  }
+
+  if (found.length === 0) {
+    found.push({
+      name: 'YouTube',
+      url: `https://www.youtube.com/results?search_query=${encodeURIComponent(`${title} EP.1 [1/4] Eng Sub`)}`,
+      source: 'official',
+    });
+  }
+
+  return found;
 }
 
 export async function upsertSeries(
@@ -3839,96 +3917,32 @@ export async function autoFillSeriesMetadata(title: string): Promise<Partial<Ser
   const trimmed = title.trim();
   if (!trimmed) throw new Error('Please provide a series title to auto-fill.');
 
-  const tvMaze = await fetchTvMazeMetadata(trimmed);
-
-  // Check if Gemini API key is available for Google Search grounded metadata enrichment
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (apiKey && apiKey !== 'MY_GEMINI_API_KEY') {
-    try {
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
-      });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: `Find accurate details for the Boys' Love (BL) live-action drama "${trimmed}".
-Return ONLY a valid JSON object (no markdown fences) with these exact fields:
-{
-  "title": "Official English Title",
-  "country": "Thailand | South Korea | Japan | Taiwan | China | Philippines",
-  "status": "airing | upcoming | completed",
-  "year": 2025,
-  "releaseDate": "YYYY-MM-DD",
-  "episodes": 12,
-  "synopsis": "Concise 2-sentence plot synopsis without spoilers.",
-  "genres": ["BL", "Romance", "Drama"],
-  "platforms": [
-    { "name": "iQIYI | Viki | GagaOOLala | WeTV | YouTube | Netflix", "url": "https://..." }
-  ]
-}`,
-        config: {
-          tools: [{ googleSearch: {} }],
-        },
-      });
-
-      const text = response.text?.trim() ?? '';
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]) as Partial<Series>;
-        return {
-          title: parsed.title || trimmed,
-          country: parsed.country || tvMaze.country || 'Thailand',
-          status:
-            parsed.status === 'airing' || parsed.status === 'upcoming' || parsed.status === 'completed'
-              ? parsed.status
-              : 'airing',
-          year: parsed.year || tvMaze.year || new Date().getFullYear(),
-          releaseDate: parsed.releaseDate || tvMaze.releaseDate || `${new Date().getFullYear()}-01-01`,
-          episodes: parsed.episodes || 12,
-          synopsis: parsed.synopsis || tvMaze.synopsis || `${trimmed} is an official Boys’ Love live-action series.`,
-          coverUrl: tvMaze.coverUrl || parsed.coverUrl || undefined,
-          genres: Array.isArray(parsed.genres) && parsed.genres.length > 0 ? parsed.genres : ['BL', 'Romance', 'Drama'],
-          platforms:
-            Array.isArray(parsed.platforms) && parsed.platforms.length > 0
-              ? parsed.platforms
-              : [
-                  {
-                    name: 'YouTube',
-                    url: `https://www.youtube.com/results?search_query=${encodeURIComponent(`${trimmed} EP.1 [1/4] Eng Sub`)}`,
-                    source: 'official',
-                  },
-                ],
-        };
-      }
-    } catch (err) {
-      console.warn('[autofill] Gemini grounding lookup fell back to TVMaze/curated lookup:', err);
-    }
-  }
+  // First check if it matches any series in our curated market feed or catalog
+  const curatedMatch = CURATED_MARKET_SYNC_DRAMAS.find(
+    (item) => item.title.toLowerCase() === trimmed.toLowerCase(),
+  );
+  const [tvMaze, discoveredPlatforms] = await Promise.all([
+    fetchTvMazeMetadata(trimmed),
+    discoverOfficialPlatformsFromWeb(trimmed),
+  ]);
 
   return {
-    title: trimmed,
-    country: tvMaze.country || 'Thailand',
-    status: 'airing',
-    year: tvMaze.year || new Date().getFullYear(),
-    releaseDate: tvMaze.releaseDate || `${new Date().getFullYear()}-01-01`,
-    episodes: 12,
+    title: curatedMatch?.title || tvMaze.officialTitle || trimmed,
+    country: curatedMatch?.country || tvMaze.country || 'Thailand',
+    status: curatedMatch?.status || tvMaze.status || 'airing',
+    year: curatedMatch?.year || tvMaze.year || new Date().getFullYear(),
+    releaseDate: curatedMatch?.releaseDate || tvMaze.releaseDate || `${new Date().getFullYear()}-01-01`,
+    episodes: curatedMatch?.episodes || tvMaze.episodes || 12,
     synopsis:
+      curatedMatch?.synopsis ||
       tvMaze.synopsis ||
       `${trimmed} is a Boys’ Love live-action drama featuring verified official streaming platform redirects.`,
-    coverUrl: tvMaze.coverUrl || undefined,
-    genres: ['BL', 'Drama', 'Romance'],
-    platforms: [
-      {
-        name: 'YouTube',
-        url: `https://www.youtube.com/results?search_query=${encodeURIComponent(`${trimmed} EP.1 [1/4] Eng Sub`)}`,
-        source: 'official',
-      },
-      {
-        name: 'Viki',
-        url: `https://www.viki.com/search?q=${encodeURIComponent(trimmed)}`,
-        source: 'official',
-      },
-    ],
+    coverUrl: curatedMatch?.coverUrl || tvMaze.coverUrl || undefined,
+    genres: curatedMatch?.genres || tvMaze.genres || ['BL', 'Drama', 'Romance'],
+    platforms:
+      curatedMatch?.platforms && curatedMatch.platforms.length > 0
+        ? curatedMatch.platforms
+        : discoveredPlatforms,
   };
 }
 
@@ -4048,7 +4062,7 @@ const CURATED_MARKET_SYNC_DRAMAS: RawBlSeries[] = [
   },
   {
     id: 'bl-heavens-x-candy-2025',
-    title: 'impression of Youth (Impression of Youth 2025)',
+    title: 'Impression of Youth',
     country: 'Taiwan',
     status: 'airing',
     sourceUrl: 'https://www.gagaoolala.com/en/videos/5135/impression-of-youth-2025',
@@ -4078,12 +4092,46 @@ const CURATED_MARKET_SYNC_DRAMAS: RawBlSeries[] = [
       { name: 'Viki', url: 'https://www.viki.com/tv/40988c-exclusive-love', source: 'official' },
     ],
   },
+  {
+    id: 'bl-perfect-10-liners-2025',
+    title: 'Perfect 10 Liners',
+    country: 'Thailand',
+    status: 'airing',
+    sourceUrl: 'https://www.youtube.com/playlist?list=PLszepnkojZI5Perfect10Liners',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/542/1355912.jpg',
+    synopsis: 'Inside the university engineering faculty’s "Perfect 10" peer-mentoring group, three generations of mentors and freshmen—Arm & Arc, Yotha & Gun, and Faifa & Wine—fall into unforgettable campus romances.',
+    year: 2024,
+    releaseDate: '2024-10-27',
+    episodes: 24,
+    genres: ['BL', 'Comedy', 'Romance', 'Campus'],
+    platforms: [
+      { name: 'YouTube', url: 'https://www.youtube.com/results?search_query=Perfect+10+Liners+EP.1+%5B1%2F4%5D+Eng+Sub', source: 'official' },
+      { name: 'WeTV', url: 'https://wetv.vip/en/search/Perfect%2010%20Liners', source: 'official' },
+    ],
+  },
+  {
+    id: 'bl-thamepo-heart-that-skips-a-beat-2025',
+    title: 'ThamePo: Heart That Skips a Beat',
+    country: 'Thailand',
+    status: 'completed',
+    sourceUrl: 'https://www.netflix.com/search?q=ThamePo',
+    coverUrl: 'https://static.tvmaze.com/uploads/images/original_untouched/549/1374122.jpg',
+    synopsis: 'Tasked with filming the farewell concert of disbanding T-pop boy group MARS, heartbroken documentarian Po forms an electric bond with leader Thame as they fight to save the band.',
+    year: 2024,
+    releaseDate: '2024-12-13',
+    episodes: 13,
+    genres: ['BL', 'Music', 'Drama', 'Romance'],
+    platforms: [
+      { name: 'Netflix', url: 'https://www.netflix.com/search?q=ThamePo', source: 'official' },
+      { name: 'YouTube', url: 'https://www.youtube.com/results?search_query=ThamePo+Heart+That+Skips+a+Beat+EP.1+%5B1%2F4%5D+Eng+Sub', source: 'official' },
+    ],
+  },
 ];
 
 export async function runMarketAutoSync(): Promise<MarketSyncResult> {
   const added: Series[] = [];
   const updated: Series[] = [];
-  let sourceUsed = 'Verified Market Feed + TVMaze Metadata Engine';
+  let sourceUsed = 'Verified Market Feed + TVMaze & Web Platform Discovery';
 
   const existingByTitle = new Map<string, Series>();
   for (const s of memorySeries) {
@@ -4092,79 +4140,34 @@ export async function runMarketAutoSync(): Promise<MarketSyncResult> {
 
   const candidateList: RawBlSeries[] = [...CURATED_MARKET_SYNC_DRAMAS];
 
-  // Also query Gemini with Google Search grounding for any brand-new announcements if GEMINI_API_KEY is active
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (apiKey && apiKey !== 'MY_GEMINI_API_KEY') {
+  // If TMDB is configured, also pull newly listed BL live-action dramas from TMDB
+  if (isTmdbConfigured()) {
     try {
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
-      });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: `Search for newly announced, currently airing, or recently released 2025 and 2026 Boys' Love (BL) live-action drama series from Thailand (GMMTV, Mandee/Domundi, IdolFactory, Change2561), South Korea, Japan, and Taiwan.
-Return ONLY a JSON array of up to 6 series objects (no markdown fences) with this exact schema:
-[
-  {
-    "title": "Official English Title",
-    "country": "Thailand | South Korea | Japan | Taiwan",
-    "status": "airing | upcoming | completed",
-    "year": 2025,
-    "releaseDate": "2025-03-01",
-    "episodes": 12,
-    "synopsis": "Concise 2-sentence plot summary.",
-    "genres": ["BL", "Romance", "Drama"],
-    "platforms": [
-      { "name": "iQIYI | Viki | GagaOOLala | WeTV | YouTube", "url": "https://..." }
-    ]
-  }
-]`,
-        config: {
-          tools: [{ googleSearch: {} }],
-        },
-      });
-
-      const text = response.text?.trim() ?? '';
-      const arrMatch = text.match(/\[[\s\S]*\]/);
-      if (arrMatch) {
-        const parsed = JSON.parse(arrMatch[0]) as Array<Partial<RawBlSeries>>;
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          sourceUsed = 'Gemini Google Search Grounding + Market Feed + TVMaze';
-          for (const item of parsed) {
-            if (!item.title?.trim()) continue;
-            const cleanPlatforms: PlatformLink[] =
-              Array.isArray(item.platforms) && item.platforms.length > 0
-                ? item.platforms
-                    .filter((p: PlatformLink) => Boolean(p && p.name && p.url && /^https?:\/\//i.test(p.url)))
-                    .map((p: PlatformLink) => ({ name: p.name, url: p.url, source: 'official' as const }))
-                : [
-                    {
-                      name: 'YouTube',
-                      url: `https://www.youtube.com/results?search_query=${encodeURIComponent(`${item.title} EP.1 [1/4] Eng Sub`)}`,
-                      source: 'official' as const,
-                    },
-                  ];
+      const tmdbItems = await fetchTmdbCatalog();
+      if (tmdbItems.length > 0) {
+        sourceUsed = 'TMDB Live Discovery + Verified Market Feed + TVMaze';
+        for (const tmdb of tmdbItems.slice(0, 12)) {
+          if (!existingByTitle.has(tmdb.title.toLowerCase().trim())) {
+            const discoveredPfs = await discoverOfficialPlatformsFromWeb(tmdb.title);
             candidateList.push({
-              id: slugifyId(item.title),
-              title: item.title.trim(),
-              country: item.country || 'Thailand',
-              status:
-                item.status === 'airing' || item.status === 'upcoming' || item.status === 'completed'
-                  ? item.status
-                  : 'airing',
-              sourceUrl: cleanPlatforms[0]?.url || `https://mydramalist.com/search?q=${encodeURIComponent(item.title)}`,
-              synopsis: item.synopsis || `${item.title} is an official Boys’ Love drama series.`,
-              year: item.year || 2025,
-              releaseDate: item.releaseDate || '2025-01-01',
-              episodes: item.episodes || 12,
-              genres: Array.isArray(item.genres) && item.genres.length > 0 ? item.genres : ['BL', 'Romance', 'Drama'],
-              platforms: cleanPlatforms,
+              id: tmdb.id,
+              title: tmdb.title,
+              country: tmdb.country,
+              status: tmdb.status,
+              sourceUrl: tmdb.sourceUrl,
+              coverUrl: tmdb.coverUrl,
+              synopsis: tmdb.synopsis || `${tmdb.title} is a ${tmdb.country} Boys’ Love series.`,
+              year: tmdb.year ?? 2025,
+              releaseDate: tmdb.releaseDate ?? '2025-01-01',
+              episodes: tmdb.episodes ?? 12,
+              genres: tmdb.genres,
+              platforms: discoveredPfs,
             });
           }
         }
       }
-    } catch (err) {
-      console.warn('[market-sync] Gemini grounding skipped or timed out, using curated market feed:', err);
+    } catch {
+      // Ignore TMDB discovery errors
     }
   }
 
@@ -4227,4 +4230,5 @@ Return ONLY a JSON array of up to 6 series objects (no markdown fences) with thi
     summary: `Market Auto-Sync completed: ${added.length} new BL series added, ${updated.length} existing series updated (${memorySeries.length} total live-action titles).`,
   };
 }
+
 

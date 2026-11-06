@@ -199,8 +199,7 @@ export async function fetchTmdbCatalog(): Promise<Series[]> {
     }
 
     return seriesList;
-  } catch (error) {
-    console.error('Error fetching TMDB catalog:', error);
+  } catch {
     return [];
   }
 }
