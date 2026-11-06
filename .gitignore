@@ -9,3 +9,4 @@ coverage/
 .aistudio/
 *.zip
 
+public/assets/aistudio/
