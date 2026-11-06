@@ -24,7 +24,13 @@ export function normalizeDatabaseUrl(rawUrl: string): string {
 
 export function getDbPool(): mysql.Pool | null {
   if (pool) return pool;
-  const rawUrl = process.env.DATABASE_URL?.trim();
+  const dbPass = process.env.DB_PASSWORD?.trim();
+  let rawUrl = process.env.DATABASE_URL?.trim() || '';
+  if (rawUrl.includes('<PASSWORD>') && dbPass) {
+    rawUrl = rawUrl.replace('<PASSWORD>', encodeURIComponent(dbPass));
+  } else if (!rawUrl && dbPass) {
+    rawUrl = `mysql://ryjfdUrv7PSH3nD.root:${encodeURIComponent(dbPass)}@gateway01.ap-southeast-1.prod.aws.tidbcloud.com:4000/blpulse`;
+  }
   if (!rawUrl || rawUrl.includes('<PASSWORD>')) return null;
 
   const url = normalizeDatabaseUrl(rawUrl);
